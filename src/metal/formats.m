@@ -215,7 +215,7 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
             .texel_align    = 1,
             .caps           = PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_LINEAR |
                               PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_BLENDABLE |
-                              PL_FMT_CAP_HOST_READABLE,
+                              PL_FMT_CAP_BLITTABLE | PL_FMT_CAP_HOST_READABLE,
             .sample_order   = {2, 1, 0, 3},
         };
 
@@ -248,7 +248,7 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
             .texel_align     = 4,
             .caps            = PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_LINEAR |
                                PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_BLENDABLE |
-                               PL_FMT_CAP_HOST_READABLE,
+                               PL_FMT_CAP_BLITTABLE | PL_FMT_CAP_HOST_READABLE,
             .component_depth = {10, 10, 10, 2},
             .host_bits       = {10, 10, 10, 2},
             .sample_order    = {0, 1, 2, 3},
