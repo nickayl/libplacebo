@@ -7,7 +7,7 @@ if metal.allowed()
 endif
 
 metal_deps = dependency('appleframeworks',
-                        modules: ['Metal', 'Foundation', 'QuartzCore'],
+                        modules: ['Metal', 'Foundation', 'QuartzCore', 'CoreGraphics'],
                         required: metal)
 metal = metal.require(metal_deps.found())
 
