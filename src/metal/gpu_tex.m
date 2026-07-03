@@ -45,6 +45,30 @@ pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
         return NULL;
     }
 
+    if (params->import_handle) {
+        pl_assert(params->import_handle == PL_HANDLE_MTL_TEX);
+        id<MTLTexture> mtex = (id<MTLTexture>) params->shared_mem.handle.handle;
+        if (!mtex) {
+            PL_ERR(gpu, "No texture handle given to import!");
+            return NULL;
+        }
+
+        if (mtex.pixelFormat != fmtp->mtl_fmt) {
+            PL_ERR(gpu, "Imported texture pixel format %lu does not match "
+                   "format %s!", (unsigned long) mtex.pixelFormat,
+                   params->format->name);
+            return NULL;
+        }
+
+        struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_mtl);
+        struct pl_tex_mtl *texp = PL_PRIV(tex);
+        texp->tex = [mtex retain];
+        tex->params = *params;
+        tex->params.initial_data = NULL;
+        tex->sampler_type = PL_SAMPLER_NORMAL;
+        return tex;
+    }
+
     struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_mtl);
     tex->params = *params;
     tex->params.initial_data = NULL;

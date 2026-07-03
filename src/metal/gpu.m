@@ -31,6 +31,9 @@ pl_gpu mtl_gpu_create(struct mtl_ctx *ctx)
     p->impl = pl_fns_mtl;
     p->ctx = ctx;
 
+    // External MTLTextures (e.g. from CVMetalTextureCache) can be imported
+    gpu->import_caps.tex = PL_HANDLE_MTL_TEX;
+
     const MTLSize max_group = dev.maxThreadsPerThreadgroup;
 
     // Shaders are consumed as vulkan-dialect SPIR-V and cross-compiled to MSL.
@@ -138,6 +141,17 @@ static void mtl_gpu_destroy(pl_gpu gpu)
 
     pl_spirv_destroy(&p->spirv);
     pl_free((void *) gpu);
+}
+
+pl_mtl pl_mtl_get(pl_gpu gpu)
+{
+    const struct pl_gpu_fns *impl = PL_PRIV(gpu);
+    if (impl->destroy == mtl_gpu_destroy) {
+        struct pl_gpu_mtl *p = (struct pl_gpu_mtl *) impl;
+        return p->ctx->mtl;
+    }
+
+    return NULL;
 }
 
 void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)

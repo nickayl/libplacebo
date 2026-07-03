@@ -74,6 +74,10 @@ PL_API pl_mtl pl_mtl_create(pl_log log, const struct pl_mtl_params *params);
 // this.
 PL_API void pl_mtl_destroy(pl_mtl *mtl);
 
+// For a `pl_gpu` backed by `pl_mtl`, this function can be used to retrieve
+// the underlying `pl_mtl`. Returns NULL for any other type of `gpu`.
+PL_API pl_mtl pl_mtl_get(pl_gpu gpu);
+
 struct pl_mtl_swapchain_params {
     // The CAMetalLayer to present to. Required. libplacebo takes a reference
     // to the layer and configures its device and pixel format.
