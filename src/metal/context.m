@@ -42,7 +42,15 @@ pl_mtl pl_mtl_create(pl_log log, const struct pl_mtl_params *params)
 
     ctx->dev = dev;
     mtl->device = dev;
-    pl_info(log, "Created Metal device: %s", dev.name.UTF8String);
+    @autoreleasepool {
+        pl_info(log, "Created Metal device: %s", dev.name.UTF8String);
+    }
+
+    ctx->queue = [dev newCommandQueue];
+    if (!ctx->queue) {
+        pl_fatal(log, "Failed to create a Metal command queue!");
+        goto error;
+    }
 
     mtl->gpu = mtl_gpu_create(ctx);
     if (!mtl->gpu)
@@ -64,6 +72,7 @@ void pl_mtl_destroy(pl_mtl *pmtl)
     pl_gpu_destroy(mtl->gpu);
 
     struct mtl_ctx *ctx = PL_PRIV(mtl);
+    [ctx->queue release];
     [ctx->dev release];
 
     pl_free(mtl);

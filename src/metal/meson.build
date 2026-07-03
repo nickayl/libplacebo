@@ -20,6 +20,8 @@ if metal.allowed()
     'metal/context.m',
     'metal/formats.m',
     'metal/gpu.m',
+    'metal/gpu_buf.m',
+    'metal/gpu_tex.m',
   ]
 else
   sources += 'metal/stubs.c'

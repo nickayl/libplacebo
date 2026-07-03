@@ -19,11 +19,6 @@
 
 static const struct pl_gpu_fns pl_fns_mtl;
 
-struct pl_gpu_mtl {
-    struct pl_gpu_fns impl;
-    struct mtl_ctx *ctx;
-};
-
 pl_gpu mtl_gpu_create(struct mtl_ctx *ctx)
 {
     id<MTLDevice> dev = ctx->dev;
@@ -81,61 +76,20 @@ static void mtl_gpu_destroy(pl_gpu gpu)
     pl_free((void *) gpu);
 }
 
-// Stub implementations, replaced by the real resource/pass code as the
-// backend grows. They fail loudly instead of crashing.
-
-static pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
+void mtl_blit_sync(struct mtl_ctx *ctx, void (^block)(id<MTLBlitCommandEncoder> enc))
 {
-    PL_ERR(gpu, "Texture creation is not yet implemented for Metal GPUs");
-    return NULL;
+    @autoreleasepool {
+        id<MTLCommandBuffer> cmdbuf = [ctx->queue commandBuffer];
+        id<MTLBlitCommandEncoder> enc = [cmdbuf blitCommandEncoder];
+        block(enc);
+        [enc endEncoding];
+        [cmdbuf commit];
+        [cmdbuf waitUntilCompleted];
+    }
 }
 
-static void mtl_tex_destroy(pl_gpu gpu, pl_tex tex)
-{
-    pl_free((void *) tex);
-}
-
-static bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
-{
-    PL_ERR(gpu, "Texture upload is not yet implemented for Metal GPUs");
-    return false;
-}
-
-static bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
-{
-    PL_ERR(gpu, "Texture download is not yet implemented for Metal GPUs");
-    return false;
-}
-
-static pl_buf mtl_buf_create(pl_gpu gpu, const struct pl_buf_params *params)
-{
-    PL_ERR(gpu, "Buffer creation is not yet implemented for Metal GPUs");
-    return NULL;
-}
-
-static void mtl_buf_destroy(pl_gpu gpu, pl_buf buf)
-{
-    pl_free((void *) buf);
-}
-
-static void mtl_buf_write(pl_gpu gpu, pl_buf buf, size_t buf_offset,
-                          const void *data, size_t size)
-{
-    PL_ERR(gpu, "Buffer write is not yet implemented for Metal GPUs");
-}
-
-static bool mtl_buf_read(pl_gpu gpu, pl_buf buf, size_t buf_offset,
-                         void *dest, size_t size)
-{
-    PL_ERR(gpu, "Buffer read is not yet implemented for Metal GPUs");
-    return false;
-}
-
-static void mtl_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset,
-                         pl_buf src, size_t src_offset, size_t size)
-{
-    PL_ERR(gpu, "Buffer copy is not yet implemented for Metal GPUs");
-}
+// Remaining stubs, replaced by the real pass code as the backend grows.
+// They fail loudly instead of crashing.
 
 static int mtl_desc_namespace(pl_gpu gpu, enum pl_desc_type type)
 {

@@ -20,8 +20,10 @@ int main()
                              PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_LINEAR);
     REQUIRE(fmt);
 
-    // Phase 1 covers creation + formats only; the gpu_tests battery arrives
-    // with the resource and pass implementations
+    pl_buffer_tests(gpu);
+    pl_texture_tests(gpu);
+
+    // Shader/pass battery arrives with the SPIRV-Cross MSL pipeline
 
     pl_mtl_destroy(&mtl);
     pl_log_destroy(&log);
