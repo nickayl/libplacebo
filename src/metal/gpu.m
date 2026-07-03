@@ -163,8 +163,11 @@ pl_mtl pl_mtl_get(pl_gpu gpu)
 void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
 {
     if (cmdbuf.status == MTLCommandBufferStatusError) {
-        PL_ERR(ctx, "Command buffer execution failed: %s",
-               cmdbuf.error.localizedDescription.UTF8String);
+        // Not all callers have an autorelease pool in place
+        @autoreleasepool {
+            PL_ERR(ctx, "Command buffer execution failed: %s",
+                   cmdbuf.error.localizedDescription.UTF8String);
+        }
     }
 }
 
