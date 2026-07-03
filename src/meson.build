@@ -64,6 +64,7 @@ headers = [
   'gamut_mapping.h',
   'gpu.h',
   'log.h',
+  'metal.h',
   'opengl.h',
   'options.h',
   'renderer.h',
@@ -156,6 +157,7 @@ components = configuration_data()
 ### Optional dependencies / components
 subdir('glsl')
 subdir('d3d11')
+subdir('metal')
 subdir('opengl')
 subdir('vulkan')
 
@@ -167,7 +169,8 @@ if lcms.found()
 endif
 
 # Check to see if libplacebo built this way is sane
-if not (components.get('vulkan') or components.get('opengl') or components.get('d3d11'))
+if not (components.get('vulkan') or components.get('opengl') or
+        components.get('d3d11') or components.get('metal'))
   warning('Building without any graphics API. libplacebo built this way still ' +
           'has some limited use (e.g. generating GLSL shaders), but most of ' +
           'its functionality will be missing or impaired!')
