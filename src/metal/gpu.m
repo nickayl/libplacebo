@@ -140,6 +140,14 @@ static void mtl_gpu_destroy(pl_gpu gpu)
     pl_free((void *) gpu);
 }
 
+void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
+{
+    if (cmdbuf.status == MTLCommandBufferStatusError) {
+        PL_ERR(ctx, "Command buffer execution failed: %s",
+               cmdbuf.error.localizedDescription.UTF8String);
+    }
+}
+
 void mtl_blit_sync(struct mtl_ctx *ctx, void (^block)(id<MTLBlitCommandEncoder> enc))
 {
     @autoreleasepool {
@@ -149,6 +157,7 @@ void mtl_blit_sync(struct mtl_ctx *ctx, void (^block)(id<MTLBlitCommandEncoder> 
         [enc endEncoding];
         [cmdbuf commit];
         [cmdbuf waitUntilCompleted];
+        mtl_cmdbuf_check(ctx, cmdbuf);
     }
 }
 

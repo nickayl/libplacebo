@@ -490,6 +490,7 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
 
         [cmdbuf commit];
         [cmdbuf waitUntilCompleted];
+        mtl_cmdbuf_check(ctx, cmdbuf);
 
         [vbuf_tmp release];
         [ibuf_tmp release];

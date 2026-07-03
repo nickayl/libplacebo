@@ -168,6 +168,7 @@ void mtl_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color)
 
         [cmdbuf commit];
         [cmdbuf waitUntilCompleted];
+        mtl_cmdbuf_check(ctx, cmdbuf);
     }
 }
 

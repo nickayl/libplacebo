@@ -83,6 +83,9 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev);
 // GPU finished executing it
 void mtl_blit_sync(struct mtl_ctx *ctx, void (^block)(id<MTLBlitCommandEncoder> enc));
 
+// Logs an error if the completed command buffer failed to execute
+void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf);
+
 // pl_gpu_fns entry points implemented in gpu_buf.m / gpu_tex.m
 pl_buf mtl_buf_create(pl_gpu gpu, const struct pl_buf_params *params);
 void mtl_buf_destroy(pl_gpu gpu, pl_buf buf);
