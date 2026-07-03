@@ -177,11 +177,11 @@ if not (components.get('vulkan') or components.get('opengl') or
 endif
 
 has_spirv = components.get('shaderc') or components.get('glslang')
-needs_spirv = components.get('vulkan') or components.get('d3d11')
+needs_spirv = components.get('vulkan') or components.get('d3d11') or components.get('metal')
 if needs_spirv and not has_spirv
   warning('Building without any GLSL compiler (shaderc, glslang), but with ' +
-          'APIs required that require one (vulkan, d3d11). This build is very ' +
-          'likely to be very limited in functionality!')
+          'APIs required that require one (vulkan, d3d11, metal). This build ' +
+          'is very likely to be very limited in functionality!')
 endif
 
 dovi = get_option('dovi')

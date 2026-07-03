@@ -39,6 +39,12 @@ pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
     struct mtl_ctx *ctx = mtl_ctx_of(gpu);
     const struct pl_fmt_mtl *fmtp = PL_PRIV(params->format);
 
+    if (fmtp->mtl_fmt == MTLPixelFormatInvalid) {
+        PL_ERR(gpu, "Format %s is vertex-only, not usable for textures!",
+               params->format->name);
+        return NULL;
+    }
+
     struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_mtl);
     tex->params = *params;
     tex->params.initial_data = NULL;
@@ -73,6 +79,12 @@ pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
             usage |= MTLTextureUsageRenderTarget;
         if (params->storable)
             usage |= MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        // Clears and scaling blits run as render passes; scaling blits also
+        // sample the source
+        if (params->blit_dst)
+            usage |= MTLTextureUsageRenderTarget;
+        if (params->blit_src)
+            usage |= MTLTextureUsageShaderRead;
         desc.usage = usage ? usage : MTLTextureUsageShaderRead;
 
         p->tex = [ctx->dev newTextureWithDescriptor:desc];
@@ -115,6 +127,82 @@ void mtl_tex_destroy(pl_gpu gpu, pl_tex tex)
     struct pl_tex_mtl *p = PL_PRIV(tex);
     [p->tex release];
     pl_free((void *) tex);
+}
+
+void mtl_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color)
+{
+    struct mtl_ctx *ctx = mtl_ctx_of(gpu);
+    struct pl_tex_mtl *p = PL_PRIV(tex);
+
+    MTLClearColor cc;
+    switch (tex->params.format->type) {
+    case PL_FMT_UINT:
+        cc = MTLClearColorMake(color.u[0], color.u[1], color.u[2], color.u[3]);
+        break;
+    case PL_FMT_SINT:
+        cc = MTLClearColorMake(color.i[0], color.i[1], color.i[2], color.i[3]);
+        break;
+    default:
+        cc = MTLClearColorMake(color.f[0], color.f[1], color.f[2], color.f[3]);
+        break;
+    }
+
+    @autoreleasepool {
+        id<MTLCommandBuffer> cmdbuf = [ctx->queue commandBuffer];
+        MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+        rpd.colorAttachments[0].texture = p->tex;
+        rpd.colorAttachments[0].loadAction = MTLLoadActionClear;
+        rpd.colorAttachments[0].clearColor = cc;
+        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+
+        id<MTLRenderCommandEncoder> enc = [cmdbuf renderCommandEncoderWithDescriptor:rpd];
+        [enc endEncoding];
+
+#if TARGET_OS_OSX
+        if (p->tex.storageMode == MTLStorageModeManaged) {
+            id<MTLBlitCommandEncoder> blit = [cmdbuf blitCommandEncoder];
+            [blit synchronizeResource:p->tex];
+            [blit endEncoding];
+        }
+#endif
+
+        [cmdbuf commit];
+        [cmdbuf waitUntilCompleted];
+    }
+}
+
+void mtl_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params)
+{
+    struct mtl_ctx *ctx = mtl_ctx_of(gpu);
+    struct pl_tex_mtl *srcp = PL_PRIV(params->src);
+    struct pl_tex_mtl *dstp = PL_PRIV(params->dst);
+
+    const pl_rect3d src_rc = params->src_rc, dst_rc = params->dst_rc;
+    const int sw = pl_rect_w(src_rc), sh = pl_rect_h(src_rc), sd = pl_rect_d(src_rc);
+    const int dw = pl_rect_w(dst_rc), dh = pl_rect_h(dst_rc), dd = pl_rect_d(dst_rc);
+
+    // Same size, no flips: a plain blit-encoder copy. Everything else
+    // (scaling, mirroring) goes through the shared raster-pass helper.
+    if (sw == dw && sh == dh && sd == dd && sw > 0 && sh >= 0 && sd >= 0) {
+        mtl_blit_sync(ctx, ^(id<MTLBlitCommandEncoder> enc) {
+            [enc copyFromTexture:srcp->tex
+                     sourceSlice:0
+                     sourceLevel:0
+                    sourceOrigin:MTLOriginMake(src_rc.x0, src_rc.y0, src_rc.z0)
+                      sourceSize:MTLSizeMake(sw, PL_MAX(sh, 1), PL_MAX(sd, 1))
+                       toTexture:dstp->tex
+                destinationSlice:0
+                destinationLevel:0
+              destinationOrigin:MTLOriginMake(dst_rc.x0, dst_rc.y0, dst_rc.z0)];
+#if TARGET_OS_OSX
+            if (dstp->tex.storageMode == MTLStorageModeManaged)
+                [enc synchronizeResource:dstp->tex];
+#endif
+        });
+        return;
+    }
+
+    pl_tex_blit_raster(gpu, params);
 }
 
 bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)

@@ -22,8 +22,7 @@ int main()
 
     pl_buffer_tests(gpu);
     pl_texture_tests(gpu);
-
-    // Shader/pass battery arrives with the SPIRV-Cross MSL pipeline
+    gpu_shader_tests(gpu);
 
     pl_mtl_destroy(&mtl);
     pl_log_destroy(&log);

@@ -23,50 +23,67 @@ struct mtl_fmt_map {
     int comps;
     int depth;
     MTLPixelFormat mtl_fmt;
+    MTLVertexFormat mtl_vfmt;
 };
 
 // Regular (unpacked, host-representable, RGBA-ordered) formats
 static const struct mtl_fmt_map mtl_regular_formats[] = {
-    {"r8",       PL_FMT_UNORM, 1,  8, MTLPixelFormatR8Unorm},
-    {"rg8",      PL_FMT_UNORM, 2,  8, MTLPixelFormatRG8Unorm},
-    {"rgba8",    PL_FMT_UNORM, 4,  8, MTLPixelFormatRGBA8Unorm},
-    {"r16",      PL_FMT_UNORM, 1, 16, MTLPixelFormatR16Unorm},
-    {"rg16",     PL_FMT_UNORM, 2, 16, MTLPixelFormatRG16Unorm},
-    {"rgba16",   PL_FMT_UNORM, 4, 16, MTLPixelFormatRGBA16Unorm},
+    {"r8",       PL_FMT_UNORM, 1,  8, MTLPixelFormatR8Unorm,      MTLVertexFormatUCharNormalized},
+    {"rg8",      PL_FMT_UNORM, 2,  8, MTLPixelFormatRG8Unorm,     MTLVertexFormatUChar2Normalized},
+    {"rgba8",    PL_FMT_UNORM, 4,  8, MTLPixelFormatRGBA8Unorm,   MTLVertexFormatUChar4Normalized},
+    {"r16",      PL_FMT_UNORM, 1, 16, MTLPixelFormatR16Unorm,     MTLVertexFormatUShortNormalized},
+    {"rg16",     PL_FMT_UNORM, 2, 16, MTLPixelFormatRG16Unorm,    MTLVertexFormatUShort2Normalized},
+    {"rgba16",   PL_FMT_UNORM, 4, 16, MTLPixelFormatRGBA16Unorm,  MTLVertexFormatUShort4Normalized},
 
-    {"r8s",      PL_FMT_SNORM, 1,  8, MTLPixelFormatR8Snorm},
-    {"rg8s",     PL_FMT_SNORM, 2,  8, MTLPixelFormatRG8Snorm},
-    {"rgba8s",   PL_FMT_SNORM, 4,  8, MTLPixelFormatRGBA8Snorm},
-    {"r16s",     PL_FMT_SNORM, 1, 16, MTLPixelFormatR16Snorm},
-    {"rg16s",    PL_FMT_SNORM, 2, 16, MTLPixelFormatRG16Snorm},
-    {"rgba16s",  PL_FMT_SNORM, 4, 16, MTLPixelFormatRGBA16Snorm},
+    {"r8s",      PL_FMT_SNORM, 1,  8, MTLPixelFormatR8Snorm,      MTLVertexFormatCharNormalized},
+    {"rg8s",     PL_FMT_SNORM, 2,  8, MTLPixelFormatRG8Snorm,     MTLVertexFormatChar2Normalized},
+    {"rgba8s",   PL_FMT_SNORM, 4,  8, MTLPixelFormatRGBA8Snorm,   MTLVertexFormatChar4Normalized},
+    {"r16s",     PL_FMT_SNORM, 1, 16, MTLPixelFormatR16Snorm,     MTLVertexFormatShortNormalized},
+    {"rg16s",    PL_FMT_SNORM, 2, 16, MTLPixelFormatRG16Snorm,    MTLVertexFormatShort2Normalized},
+    {"rgba16s",  PL_FMT_SNORM, 4, 16, MTLPixelFormatRGBA16Snorm,  MTLVertexFormatShort4Normalized},
 
-    {"r8u",      PL_FMT_UINT,  1,  8, MTLPixelFormatR8Uint},
-    {"rg8u",     PL_FMT_UINT,  2,  8, MTLPixelFormatRG8Uint},
-    {"rgba8u",   PL_FMT_UINT,  4,  8, MTLPixelFormatRGBA8Uint},
-    {"r16u",     PL_FMT_UINT,  1, 16, MTLPixelFormatR16Uint},
-    {"rg16u",    PL_FMT_UINT,  2, 16, MTLPixelFormatRG16Uint},
-    {"rgba16u",  PL_FMT_UINT,  4, 16, MTLPixelFormatRGBA16Uint},
-    {"r32u",     PL_FMT_UINT,  1, 32, MTLPixelFormatR32Uint},
-    {"rg32u",    PL_FMT_UINT,  2, 32, MTLPixelFormatRG32Uint},
-    {"rgba32u",  PL_FMT_UINT,  4, 32, MTLPixelFormatRGBA32Uint},
+    {"r8u",      PL_FMT_UINT,  1,  8, MTLPixelFormatR8Uint,       MTLVertexFormatUChar},
+    {"rg8u",     PL_FMT_UINT,  2,  8, MTLPixelFormatRG8Uint,      MTLVertexFormatUChar2},
+    {"rgba8u",   PL_FMT_UINT,  4,  8, MTLPixelFormatRGBA8Uint,    MTLVertexFormatUChar4},
+    {"r16u",     PL_FMT_UINT,  1, 16, MTLPixelFormatR16Uint,      MTLVertexFormatUShort},
+    {"rg16u",    PL_FMT_UINT,  2, 16, MTLPixelFormatRG16Uint,     MTLVertexFormatUShort2},
+    {"rgba16u",  PL_FMT_UINT,  4, 16, MTLPixelFormatRGBA16Uint,   MTLVertexFormatUShort4},
+    {"r32u",     PL_FMT_UINT,  1, 32, MTLPixelFormatR32Uint,      MTLVertexFormatUInt},
+    {"rg32u",    PL_FMT_UINT,  2, 32, MTLPixelFormatRG32Uint,     MTLVertexFormatUInt2},
+    {"rgba32u",  PL_FMT_UINT,  4, 32, MTLPixelFormatRGBA32Uint,   MTLVertexFormatUInt4},
 
-    {"r8i",      PL_FMT_SINT,  1,  8, MTLPixelFormatR8Sint},
-    {"rg8i",     PL_FMT_SINT,  2,  8, MTLPixelFormatRG8Sint},
-    {"rgba8i",   PL_FMT_SINT,  4,  8, MTLPixelFormatRGBA8Sint},
-    {"r16i",     PL_FMT_SINT,  1, 16, MTLPixelFormatR16Sint},
-    {"rg16i",    PL_FMT_SINT,  2, 16, MTLPixelFormatRG16Sint},
-    {"rgba16i",  PL_FMT_SINT,  4, 16, MTLPixelFormatRGBA16Sint},
-    {"r32i",     PL_FMT_SINT,  1, 32, MTLPixelFormatR32Sint},
-    {"rg32i",    PL_FMT_SINT,  2, 32, MTLPixelFormatRG32Sint},
-    {"rgba32i",  PL_FMT_SINT,  4, 32, MTLPixelFormatRGBA32Sint},
+    {"r8i",      PL_FMT_SINT,  1,  8, MTLPixelFormatR8Sint,       MTLVertexFormatChar},
+    {"rg8i",     PL_FMT_SINT,  2,  8, MTLPixelFormatRG8Sint,      MTLVertexFormatChar2},
+    {"rgba8i",   PL_FMT_SINT,  4,  8, MTLPixelFormatRGBA8Sint,    MTLVertexFormatChar4},
+    {"r16i",     PL_FMT_SINT,  1, 16, MTLPixelFormatR16Sint,      MTLVertexFormatShort},
+    {"rg16i",    PL_FMT_SINT,  2, 16, MTLPixelFormatRG16Sint,     MTLVertexFormatShort2},
+    {"rgba16i",  PL_FMT_SINT,  4, 16, MTLPixelFormatRGBA16Sint,   MTLVertexFormatShort4},
+    {"r32i",     PL_FMT_SINT,  1, 32, MTLPixelFormatR32Sint,      MTLVertexFormatInt},
+    {"rg32i",    PL_FMT_SINT,  2, 32, MTLPixelFormatRG32Sint,     MTLVertexFormatInt2},
+    {"rgba32i",  PL_FMT_SINT,  4, 32, MTLPixelFormatRGBA32Sint,   MTLVertexFormatInt4},
 
-    {"r16hf",    PL_FMT_FLOAT, 1, 16, MTLPixelFormatR16Float},
-    {"rg16hf",   PL_FMT_FLOAT, 2, 16, MTLPixelFormatRG16Float},
-    {"rgba16hf", PL_FMT_FLOAT, 4, 16, MTLPixelFormatRGBA16Float},
-    {"r32f",     PL_FMT_FLOAT, 1, 32, MTLPixelFormatR32Float},
-    {"rg32f",    PL_FMT_FLOAT, 2, 32, MTLPixelFormatRG32Float},
-    {"rgba32f",  PL_FMT_FLOAT, 4, 32, MTLPixelFormatRGBA32Float},
+    {"r16hf",    PL_FMT_FLOAT, 1, 16, MTLPixelFormatR16Float,     MTLVertexFormatHalf},
+    {"rg16hf",   PL_FMT_FLOAT, 2, 16, MTLPixelFormatRG16Float,    MTLVertexFormatHalf2},
+    {"rgba16hf", PL_FMT_FLOAT, 4, 16, MTLPixelFormatRGBA16Float,  MTLVertexFormatHalf4},
+    {"r32f",     PL_FMT_FLOAT, 1, 32, MTLPixelFormatR32Float,     MTLVertexFormatFloat},
+    {"rg32f",    PL_FMT_FLOAT, 2, 32, MTLPixelFormatRG32Float,    MTLVertexFormatFloat2},
+    {"rgba32f",  PL_FMT_FLOAT, 4, 32, MTLPixelFormatRGBA32Float,  MTLVertexFormatFloat4},
+};
+
+// Metal has no 3-component pixel formats, but it does have the vertex formats
+static const struct mtl_fmt_map mtl_vertex_only_formats[] = {
+    {"rgb8",    PL_FMT_UNORM, 3,  8, MTLPixelFormatInvalid, MTLVertexFormatUChar3Normalized},
+    {"rgb16",   PL_FMT_UNORM, 3, 16, MTLPixelFormatInvalid, MTLVertexFormatUShort3Normalized},
+    {"rgb8s",   PL_FMT_SNORM, 3,  8, MTLPixelFormatInvalid, MTLVertexFormatChar3Normalized},
+    {"rgb16s",  PL_FMT_SNORM, 3, 16, MTLPixelFormatInvalid, MTLVertexFormatShort3Normalized},
+    {"rgb8u",   PL_FMT_UINT,  3,  8, MTLPixelFormatInvalid, MTLVertexFormatUChar3},
+    {"rgb16u",  PL_FMT_UINT,  3, 16, MTLPixelFormatInvalid, MTLVertexFormatUShort3},
+    {"rgb32u",  PL_FMT_UINT,  3, 32, MTLPixelFormatInvalid, MTLVertexFormatUInt3},
+    {"rgb8i",   PL_FMT_SINT,  3,  8, MTLPixelFormatInvalid, MTLVertexFormatChar3},
+    {"rgb16i",  PL_FMT_SINT,  3, 16, MTLPixelFormatInvalid, MTLVertexFormatShort3},
+    {"rgb32i",  PL_FMT_SINT,  3, 32, MTLPixelFormatInvalid, MTLVertexFormatInt3},
+    {"rgb16hf", PL_FMT_FLOAT, 3, 16, MTLPixelFormatInvalid, MTLVertexFormatHalf3},
+    {"rgb32f",  PL_FMT_FLOAT, 3, 32, MTLPixelFormatInvalid, MTLVertexFormatFloat3},
 };
 
 static enum pl_fmt_caps mtl_fmt_caps(const struct mtl_fmt_map *map, bool fl32_filter)
@@ -93,7 +110,41 @@ static enum pl_fmt_caps mtl_fmt_caps(const struct mtl_fmt_map *map, bool fl32_fi
         pl_unreachable();
     }
 
+    // Blits are a blit-encoder copy, or a raster pass when scaling; clears
+    // are a render pass — all renderable formats qualify
+    if (caps & PL_FMT_CAP_RENDERABLE)
+        caps |= PL_FMT_CAP_BLITTABLE;
+
     return caps;
+}
+
+// Formats supporting function texture read-write per the Metal feature tables
+static bool mtl_fmt_readwrite(const char *name, MTLReadWriteTextureTier tier)
+{
+    static const char *tier1[] = {
+        "r32f", "r32u", "r32i",
+    };
+    static const char *tier2[] = {
+        "rgba32f", "rgba32u", "rgba32i", "rgba16hf", "rgba16u", "rgba16i",
+        "rgba8", "rgba8u", "rgba8i", "r16hf", "r16u", "r16i",
+        "r8", "r8u", "r8i",
+    };
+
+    if (tier >= MTLReadWriteTextureTier1) {
+        for (int i = 0; i < PL_ARRAY_SIZE(tier1); i++) {
+            if (!strcmp(name, tier1[i]))
+                return true;
+        }
+    }
+
+    if (tier >= MTLReadWriteTextureTier2) {
+        for (int i = 0; i < PL_ARRAY_SIZE(tier2); i++) {
+            if (!strcmp(name, tier2[i]))
+                return true;
+        }
+    }
+
+    return false;
 }
 
 void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
@@ -101,6 +152,10 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
     bool fl32_filter = false;
     if (@available(macOS 11.0, iOS 14.0, *))
         fl32_filter = dev.supports32BitFloatFiltering;
+
+    MTLReadWriteTextureTier rw_tier = MTLReadWriteTextureTierNone;
+    if (@available(macOS 10.13, iOS 11.0, *))
+        rw_tier = dev.readWriteTextureSupport;
 
     PL_ARRAY(pl_fmt) formats = {0};
 
@@ -110,6 +165,7 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
         struct pl_fmt_t *fmt = pl_alloc_obj(gpu, fmt, struct pl_fmt_mtl);
         struct pl_fmt_mtl *fmtp = PL_PRIV(fmt);
         fmtp->mtl_fmt = map->mtl_fmt;
+        fmtp->mtl_vfmt = map->mtl_vfmt;
 
         *fmt = (struct pl_fmt_t) {
             .name           = map->name,
@@ -132,6 +188,41 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
         fmt->glsl_type = pl_var_glsl_type_name(pl_var_from_fmt(fmt, ""));
         fmt->glsl_format = pl_fmt_glsl_format(fmt, map->comps);
         fmt->fourcc = pl_fmt_fourcc(fmt);
+        if (gpu->glsl.compute && fmt->glsl_format) {
+            fmt->caps |= PL_FMT_CAP_STORABLE;
+            if (mtl_fmt_readwrite(map->name, rw_tier))
+                fmt->caps |= PL_FMT_CAP_READWRITE;
+        }
+        PL_ARRAY_APPEND(gpu, formats, fmt);
+    }
+
+    for (int n = 0; n < PL_ARRAY_SIZE(mtl_vertex_only_formats); n++) {
+        const struct mtl_fmt_map *map = &mtl_vertex_only_formats[n];
+
+        struct pl_fmt_t *fmt = pl_alloc_obj(gpu, fmt, struct pl_fmt_mtl);
+        struct pl_fmt_mtl *fmtp = PL_PRIV(fmt);
+        fmtp->mtl_fmt = MTLPixelFormatInvalid;
+        fmtp->mtl_vfmt = map->mtl_vfmt;
+
+        *fmt = (struct pl_fmt_t) {
+            .name           = map->name,
+            .type           = map->type,
+            .num_components = map->comps,
+            .opaque         = false,
+            .internal_size  = map->comps * map->depth / 8,
+            .texel_size     = map->comps * map->depth / 8,
+            .texel_align    = 1,
+            .caps           = PL_FMT_CAP_VERTEX,
+        };
+
+        for (int i = 0; i < map->comps; i++) {
+            fmt->component_depth[i] = map->depth;
+            fmt->host_bits[i] = map->depth;
+            fmt->sample_order[i] = i;
+        }
+
+        fmt->glsl_type = pl_var_glsl_type_name(pl_var_from_fmt(fmt, ""));
+        fmt->fourcc = pl_fmt_fourcc(fmt);
         PL_ARRAY_APPEND(gpu, formats, fmt);
     }
 
@@ -140,6 +231,7 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
         struct pl_fmt_t *fmt = pl_alloc_obj(gpu, fmt, struct pl_fmt_mtl);
         struct pl_fmt_mtl *fmtp = PL_PRIV(fmt);
         fmtp->mtl_fmt = MTLPixelFormatBGRA8Unorm;
+        fmtp->mtl_vfmt = MTLVertexFormatInvalid;
 
         *fmt = (struct pl_fmt_t) {
             .name           = "bgra8",
@@ -172,6 +264,7 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
         struct pl_fmt_t *fmt = pl_alloc_obj(gpu, fmt, struct pl_fmt_mtl);
         struct pl_fmt_mtl *fmtp = PL_PRIV(fmt);
         fmtp->mtl_fmt = MTLPixelFormatRGB10A2Unorm;
+        fmtp->mtl_vfmt = MTLVertexFormatInvalid;
 
         *fmt = (struct pl_fmt_t) {
             .name            = "rgb10a2",
