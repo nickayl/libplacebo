@@ -497,6 +497,7 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
         }
 
         struct mtl_pending use = mtl_commit(ctx, cmdbuf);
+        mtl_timer_record(params->timer, &use);
 
         // Track the last GPU use of everything this pass touches, so CPU
         // accesses and polls can synchronize against it

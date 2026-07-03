@@ -93,6 +93,22 @@ struct pl_pass_mtl {
     MTLSize group_size;
 };
 
+#define MTL_TIMER_SLOTS 8
+
+// Timings come from MTLCommandBuffer's GPUStartTime/GPUEndTime, which are
+// only valid after completion: the timer keeps references to the timed
+// submissions and harvests them lazily on query, so no completion handlers
+// (and no lifetime hazards) are involved
+struct pl_timer_t {
+    struct mtl_pending pending[MTL_TIMER_SLOTS]; // in-flight timed submissions
+    int num_pending;
+    uint64_t results[MTL_TIMER_SLOTS]; // harvested durations, in ns
+    int num_results;
+};
+
+// Tracks `use` as a timed submission of `timer` (NULL timer is a no-op)
+void mtl_timer_record(pl_timer timer, const struct mtl_pending *use);
+
 pl_gpu mtl_gpu_create(struct mtl_ctx *ctx);
 void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev);
 

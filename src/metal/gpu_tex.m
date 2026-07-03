@@ -333,6 +333,7 @@ bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
             });
             mtl_mark_pending(&bufp->pending, &use);
             mtl_mark_pending(&p->pending, &use);
+            mtl_timer_record(params->timer, &use);
             mtl_pending_release(&use);
             return true;
         }
@@ -387,6 +388,7 @@ bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
             });
             mtl_mark_pending(&p->pending, &use);
             mtl_mark_pending(&bufp->pending, &use);
+            mtl_timer_record(params->timer, &use);
             mtl_pending_release(&use);
             return true;
         }

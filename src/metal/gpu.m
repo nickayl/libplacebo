@@ -269,6 +269,73 @@ static int mtl_desc_namespace(pl_gpu gpu, enum pl_desc_type type)
     return 0;
 }
 
+static pl_timer mtl_timer_create(pl_gpu gpu)
+{
+    return pl_zalloc(NULL, sizeof(struct pl_timer_t));
+}
+
+static void mtl_timer_destroy(pl_gpu gpu, pl_timer timer)
+{
+    for (int i = 0; i < timer->num_pending; i++)
+        mtl_pending_release(&timer->pending[i]);
+    pl_free(timer);
+}
+
+void mtl_timer_record(pl_timer timer, const struct mtl_pending *use)
+{
+    if (!timer)
+        return;
+
+    // Best-effort: drop the oldest measurement when the ring is full
+    if (timer->num_pending == MTL_TIMER_SLOTS) {
+        mtl_pending_release(&timer->pending[0]);
+        memmove(&timer->pending[0], &timer->pending[1],
+                (MTL_TIMER_SLOTS - 1) * sizeof(timer->pending[0]));
+        timer->num_pending--;
+    }
+
+    timer->pending[timer->num_pending] = (struct mtl_pending) {0};
+    mtl_mark_pending(&timer->pending[timer->num_pending], use);
+    timer->num_pending++;
+}
+
+static uint64_t mtl_timer_query(pl_gpu gpu, pl_timer timer)
+{
+    // Harvest all completed submissions, in order
+    int done = 0;
+    while (done < timer->num_pending) {
+        id<MTLCommandBuffer> cmdbuf = timer->pending[done].cmdbuf;
+        if (cmdbuf.status < MTLCommandBufferStatusCompleted)
+            break;
+
+        if (cmdbuf.status == MTLCommandBufferStatusCompleted &&
+            timer->num_results < MTL_TIMER_SLOTS)
+        {
+            const double duration = cmdbuf.GPUEndTime - cmdbuf.GPUStartTime;
+            if (duration > 0)
+                timer->results[timer->num_results++] = duration * 1e9;
+        }
+
+        mtl_pending_release(&timer->pending[done]);
+        done++;
+    }
+
+    if (done) {
+        memmove(&timer->pending[0], &timer->pending[done],
+                (timer->num_pending - done) * sizeof(timer->pending[0]));
+        timer->num_pending -= done;
+    }
+
+    if (!timer->num_results)
+        return 0;
+
+    const uint64_t result = timer->results[0];
+    timer->num_results--;
+    memmove(&timer->results[0], &timer->results[1],
+            timer->num_results * sizeof(timer->results[0]));
+    return result;
+}
+
 static void mtl_gpu_finish(pl_gpu gpu)
 {
     struct pl_gpu_mtl *p = PL_PRIV(gpu);
@@ -294,5 +361,8 @@ static const struct pl_gpu_fns pl_fns_mtl = {
     .pass_create    = mtl_pass_create,
     .pass_destroy   = mtl_pass_destroy,
     .pass_run       = mtl_pass_run,
+    .timer_create   = mtl_timer_create,
+    .timer_destroy  = mtl_timer_destroy,
+    .timer_query    = mtl_timer_query,
     .gpu_finish     = mtl_gpu_finish,
 };
