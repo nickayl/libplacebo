@@ -309,13 +309,13 @@ static inline uint16_t f32_to_f16(float value)
         return sign | 0x7C00u;
     if (bits < 0x38800000u) { // subnormal (or zero) in half
         const uint32_t shift = 126u - (bits >> 23);
-        if (shift > 24u)
-            return sign;
-        uint32_t mant = (bits & 0x7FFFFFu) | 0x800000u;
-        const uint32_t half = mant >> (shift + 1);
-        const uint32_t rem = mant & ((2u << shift) - 1);
-        return sign | (half + ((rem > (1u << shift)) ||
-                               (rem == (1u << shift) && (half & 1u))));
+        if (shift >= 25u)
+            return sign; // rounds to zero
+        const uint32_t mant = (bits & 0x7FFFFFu) | 0x800000u;
+        const uint32_t half = mant >> shift;
+        const uint32_t rem = mant & ((1u << shift) - 1);
+        return sign | (half + ((rem > (1u << (shift - 1))) ||
+                               (rem == (1u << (shift - 1)) && (half & 1u))));
     }
 
     bits += 0xC8000000u; // rebias exponent
