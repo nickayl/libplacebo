@@ -19,6 +19,7 @@
 #define LIBPLACEBO_METAL_H_
 
 #include <libplacebo/gpu.h>
+#include <libplacebo/swapchain.h>
 
 PL_API_BEGIN
 
@@ -27,9 +28,12 @@ PL_API_BEGIN
 // pointers that can be bridged from `id<MTLDevice>` etc. by the caller.
 #ifdef __OBJC__
 @protocol MTLDevice;
+@class CAMetalLayer;
 typedef id<MTLDevice> pl_mtl_device;
+typedef CAMetalLayer *pl_mtl_layer;
 #else
 typedef void *pl_mtl_device;
+typedef void *pl_mtl_layer;
 #endif
 
 // Structure representing the actual Metal device and associated GPU instance
@@ -66,6 +70,19 @@ PL_API pl_mtl pl_mtl_create(pl_log log, const struct pl_mtl_params *params);
 // via `mtl->gpu`) *must* be explicitly destroyed by the user before calling
 // this.
 PL_API void pl_mtl_destroy(pl_mtl *mtl);
+
+struct pl_mtl_swapchain_params {
+    // The CAMetalLayer to present to. Required. libplacebo takes a reference
+    // to the layer and configures its device and pixel format.
+    pl_mtl_layer layer;
+};
+
+#define pl_mtl_swapchain_params(...) (&(struct pl_mtl_swapchain_params) { __VA_ARGS__ })
+
+// Creates a new Metal swapchain presenting to the given CAMetalLayer.
+// Returns NULL on failure.
+PL_API pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
+    const struct pl_mtl_swapchain_params *params);
 
 PL_API_END
 

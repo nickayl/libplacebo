@@ -78,6 +78,15 @@ if sdl.found()
     )
   endif
 
+  if components.get('metal')
+    conf_demos.set('HAVE_SDL_METAL', true)
+    apis += static_library('sdl-mtl',
+      dependencies: [libplacebo, sdl],
+      sources: 'window_sdl.c',
+      c_args: '-DUSE_MTL',
+    )
+  endif
+
   if components.get('opengl')
     conf_demos.set('HAVE_SDL_OPENGL', true)
     apis += static_library('sdl-gl',

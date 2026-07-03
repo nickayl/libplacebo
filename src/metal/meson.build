@@ -6,7 +6,8 @@ if metal.allowed()
   metal = metal.require(add_languages('objc', native: false, required: metal))
 endif
 
-metal_deps = dependency('appleframeworks', modules: ['Metal', 'Foundation'],
+metal_deps = dependency('appleframeworks',
+                        modules: ['Metal', 'Foundation', 'QuartzCore'],
                         required: metal)
 metal = metal.require(metal_deps.found())
 
@@ -45,6 +46,7 @@ if metal.allowed()
     'metal/gpu_buf.m',
     'metal/gpu_pass.m',
     'metal/gpu_tex.m',
+    'metal/swapchain.m',
   ]
 else
   sources += 'metal/stubs.c'

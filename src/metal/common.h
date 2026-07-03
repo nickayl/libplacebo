@@ -20,10 +20,12 @@
 #include "../common.h"
 #include "../log.h"
 #include "../gpu.h"
+#include "../swapchain.h"
 #include "../glsl/spirv.h"
 
 #include <TargetConditionals.h>
 #import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
 
 #include <libplacebo/metal.h>
 

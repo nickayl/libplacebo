@@ -1,7 +1,7 @@
 // License: CC0 / Public Domain
 
-#if !defined(USE_GL) && !defined(USE_VK) || defined(USE_GL) && defined(USE_VK)
-#error Specify exactly one of -DUSE_GL or -DUSE_VK when compiling!
+#if defined(USE_GL) + defined(USE_VK) + defined(USE_MTL) != 1
+#error Specify exactly one of -DUSE_GL, -DUSE_VK or -DUSE_MTL when compiling!
 #endif
 
 #include <SDL.h>
@@ -28,6 +28,15 @@
 #define IMPL_TAG "sdl2-gl"
 #endif
 
+#ifdef USE_MTL
+#include <libplacebo/metal.h>
+#include <SDL_metal.h>
+#define WINFLAG_API SDL_WINDOW_METAL
+#define IMPL win_impl_sdl_mtl
+#define IMPL_NAME "SDL2 (metal)"
+#define IMPL_TAG "sdl2-mtl"
+#endif
+
 #ifdef NDEBUG
 #define DEBUG false
 #else
@@ -49,6 +58,11 @@ struct priv {
 #ifdef USE_GL
     SDL_GLContext gl_ctx;
     pl_opengl gl;
+#endif
+
+#ifdef USE_MTL
+    SDL_MetalView mtl_view;
+    pl_mtl mtl;
 #endif
 
     int scroll_dx, scroll_dy;
@@ -188,6 +202,34 @@ static struct window *sdl_create(pl_log log, const struct window_params *params)
     SDL_GL_GetDrawableSize(p->win, &w, &h);
 #endif // USE_GL
 
+#ifdef USE_MTL
+
+    p->mtl_view = SDL_Metal_CreateView(p->win);
+    if (!p->mtl_view) {
+        fprintf(stderr, "SDL2: Failed creating metal view: %s\n", SDL_GetError());
+        goto error;
+    }
+
+    p->mtl = pl_mtl_create(log, pl_mtl_params());
+    if (!p->mtl) {
+        fprintf(stderr, "libplacebo: Failed creating metal device\n");
+        goto error;
+    }
+
+    p->w.swapchain = pl_mtl_create_swapchain(p->mtl, pl_mtl_swapchain_params(
+        .layer = SDL_Metal_GetLayer(p->mtl_view),
+    ));
+
+    if (!p->w.swapchain) {
+        fprintf(stderr, "libplacebo: Failed creating metal swapchain\n");
+        goto error;
+    }
+
+    p->w.gpu = p->mtl->gpu;
+
+    SDL_Metal_GetDrawableSize(p->win, &w, &h);
+#endif // USE_MTL
+
     pl_swapchain_colorspace_hint(p->w.swapchain, &params->colors);
     if (!pl_swapchain_resize(p->w.swapchain, &w, &h)) {
         fprintf(stderr, "libplacebo: Failed initializing swapchain\n");
@@ -222,6 +264,12 @@ static void sdl_destroy(struct window **window)
 #ifdef USE_GL
     pl_opengl_destroy(&p->gl);
     SDL_GL_DeleteContext(p->gl_ctx);
+#endif
+
+#ifdef USE_MTL
+    pl_mtl_destroy(&p->mtl);
+    if (p->mtl_view)
+        SDL_Metal_DestroyView(p->mtl_view);
 #endif
 
     for (int i = 0; i < p->files_num; i++)

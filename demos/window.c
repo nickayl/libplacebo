@@ -15,6 +15,7 @@ extern const struct window_impl win_impl_glfw_gl;
 extern const struct window_impl win_impl_glfw_d3d11;
 extern const struct window_impl win_impl_sdl_vk;
 extern const struct window_impl win_impl_sdl_gl;
+extern const struct window_impl win_impl_sdl_mtl;
 
 static const struct window_impl *win_impls[] = {
 #ifdef HAVE_GLFW_VULKAN
@@ -28,6 +29,9 @@ static const struct window_impl *win_impls[] = {
 #endif
 #ifdef HAVE_SDL_VULKAN
     &win_impl_sdl_vk,
+#endif
+#ifdef HAVE_SDL_METAL
+    &win_impl_sdl_mtl,
 #endif
 #ifdef HAVE_SDL_OPENGL
     &win_impl_sdl_gl,

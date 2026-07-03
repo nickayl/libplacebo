@@ -33,3 +33,9 @@ void pl_mtl_destroy(pl_mtl *pmtl)
     pl_mtl mtl = *pmtl;
     pl_assert(!mtl);
 }
+
+pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
+    const struct pl_mtl_swapchain_params *params)
+{
+    pl_unreachable();
+}
