@@ -91,6 +91,12 @@ struct pl_pass_mtl {
     id<MTLComputePipelineState> cps; // compute passes
     MTLPrimitiveType prim;
     MTLSize group_size;
+
+    // Push constants staging: the cross-compiled MSL struct is padded to its
+    // natural alignment, and Metal validates the bound length against the
+    // padded size, so the bytes are staged into a zero-padded scratch
+    size_t pushc_size;
+    uint8_t *pushc;
 };
 
 #define MTL_TIMER_SLOTS 8

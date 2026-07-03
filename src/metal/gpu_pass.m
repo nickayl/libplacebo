@@ -188,6 +188,11 @@ pl_pass mtl_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
     pass->params = pl_pass_params_copy(pass, params);
     struct pl_pass_mtl *p = PL_PRIV(pass);
 
+    if (params->push_constants_size) {
+        p->pushc_size = PL_ALIGN2(params->push_constants_size, 16);
+        p->pushc = pl_zalloc(pass, p->pushc_size);
+    }
+
     void *tmp = pl_tmp(NULL);
     id<MTLFunction> vert_fn = nil, frag_fn = nil, comp_fn = nil;
 
@@ -388,9 +393,9 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
             }
 
             if (pass->params.push_constants_size) {
-                [enc setBytes:params->push_constants
-                       length:pass->params.push_constants_size
-                      atIndex:MTL_PUSHC_INDEX];
+                memcpy(p->pushc, params->push_constants,
+                       pass->params.push_constants_size);
+                [enc setBytes:p->pushc length:p->pushc_size atIndex:MTL_PUSHC_INDEX];
             }
 
             [enc dispatchThreadgroups:MTLSizeMake(params->compute_groups[0],
@@ -433,11 +438,11 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
             }
 
             if (pass->params.push_constants_size) {
-                [enc setVertexBytes:params->push_constants
-                             length:pass->params.push_constants_size
+                memcpy(p->pushc, params->push_constants,
+                       pass->params.push_constants_size);
+                [enc setVertexBytes:p->pushc length:p->pushc_size
                             atIndex:MTL_PUSHC_INDEX];
-                [enc setFragmentBytes:params->push_constants
-                               length:pass->params.push_constants_size
+                [enc setFragmentBytes:p->pushc length:p->pushc_size
                               atIndex:MTL_PUSHC_INDEX];
             }
 
