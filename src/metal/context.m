@@ -52,6 +52,9 @@ pl_mtl pl_mtl_create(pl_log log, const struct pl_mtl_params *params)
         goto error;
     }
 
+    // Optional: enables bounded-timeout waits on individual submissions
+    ctx->event = [dev newSharedEvent];
+
     mtl->gpu = mtl_gpu_create(ctx);
     if (!mtl->gpu)
         goto error;
@@ -72,6 +75,7 @@ void pl_mtl_destroy(pl_mtl *pmtl)
     pl_gpu_destroy(mtl->gpu);
 
     struct mtl_ctx *ctx = PL_PRIV(mtl);
+    [ctx->event release];
     [ctx->queue release];
     [ctx->dev release];
 

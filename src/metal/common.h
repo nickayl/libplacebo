@@ -38,12 +38,24 @@
 // is explicit: whatever is stored in these structs holds a retain reference,
 // released by the matching destroy function.
 
+// A (command buffer, shared event value) pair identifying one GPU submission
+struct mtl_pending {
+    id<MTLCommandBuffer> cmdbuf; // retained
+    uint64_t value;              // `mtl_ctx.event` value signaled on completion
+};
+
 struct mtl_ctx {
     pl_log log;
     struct pl_mtl_t *mtl;
     id<MTLDevice> dev;
     id<MTLCommandQueue> queue;
-    id<MTLCommandBuffer> last_committed; // most recent commit on `queue`
+
+    // Signaled by every committed command buffer with a monotonic counter,
+    // enabling bounded-timeout waits on individual submissions
+    id<MTLSharedEvent> event;
+    uint64_t event_value;
+
+    struct mtl_pending last_committed; // most recent commit on `queue`
 };
 
 struct pl_gpu_mtl {
@@ -66,12 +78,12 @@ struct pl_fmt_mtl {
 
 struct pl_buf_mtl {
     id<MTLBuffer> buf;
-    id<MTLCommandBuffer> pending; // last GPU use, or nil
+    struct mtl_pending pending; // last GPU use
 };
 
 struct pl_tex_mtl {
     id<MTLTexture> tex;
-    id<MTLCommandBuffer> pending; // last GPU use, or nil
+    struct mtl_pending pending; // last GPU use
 };
 
 struct pl_pass_mtl {
@@ -86,22 +98,34 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev);
 
 // GPU-GPU hazards are handled by Metal's automatic hazard tracking (all work
 // goes through one queue); these helpers cover CPU<->GPU coherency. Every
-// resource carries a `pending` slot referencing the last command buffer that
+// resource carries a `pending` slot referencing the last submission that
 // used it on the GPU: CPU access waits on it, polls query it.
 
-// Retains `cmdbuf` as the new pending use in `slot`
-void mtl_mark_pending(id<MTLCommandBuffer> *slot, id<MTLCommandBuffer> cmdbuf);
+// Encodes the shared-event signal, commits `cmdbuf`, and tracks it as the
+// most recent commit. Returns the submission, retained (+1)
+struct mtl_pending mtl_commit(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf);
+
+// Retains `use` as the new pending use in `slot`
+void mtl_mark_pending(struct mtl_pending *slot, const struct mtl_pending *use);
+
+// Releases and clears a pending reference (without waiting)
+void mtl_pending_release(struct mtl_pending *p);
 
 // Whether the pending use (if any) is still executing
-bool mtl_pending_busy(id<MTLCommandBuffer> pending);
+bool mtl_pending_busy(struct mtl_ctx *ctx, const struct mtl_pending *p);
 
 // Blocks until the pending use (if any) completed, then clears the slot
-void mtl_pending_wait(struct mtl_ctx *ctx, id<MTLCommandBuffer> *slot);
+void mtl_pending_wait(struct mtl_ctx *ctx, struct mtl_pending *slot);
+
+// Waits for the pending use up to `timeout` nanoseconds (0 = never blocks,
+// UINT64_MAX = blocks indefinitely). Returns whether it is still executing
+bool mtl_pending_wait_timeout(struct mtl_ctx *ctx, struct mtl_pending *slot,
+                              uint64_t timeout);
 
 // Encodes `block` into a one-shot blit command buffer and commits it without
-// waiting. Returns the committed command buffer, retained (+1)
-id<MTLCommandBuffer> mtl_blit_submit(struct mtl_ctx *ctx,
-                                     void (^block)(id<MTLBlitCommandEncoder> enc));
+// waiting. Returns the submission, retained (+1)
+struct mtl_pending mtl_blit_submit(struct mtl_ctx *ctx,
+                                   void (^block)(id<MTLBlitCommandEncoder> enc));
 
 // Logs an error if the completed command buffer failed to execute
 void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf);

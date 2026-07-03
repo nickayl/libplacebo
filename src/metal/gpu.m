@@ -168,44 +168,98 @@ void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
     }
 }
 
-void mtl_mark_pending(id<MTLCommandBuffer> *slot, id<MTLCommandBuffer> cmdbuf)
+struct mtl_pending mtl_commit(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
 {
-    [cmdbuf retain];
-    [*slot release];
-    *slot = cmdbuf;
+    struct mtl_pending use = { .cmdbuf = [cmdbuf retain] };
+
+    if (ctx->event) {
+        use.value = ++ctx->event_value;
+        [cmdbuf encodeSignalEvent:ctx->event value:use.value];
+    }
+
+    [cmdbuf commit];
+    mtl_mark_pending(&ctx->last_committed, &use);
+    return use;
 }
 
-bool mtl_pending_busy(id<MTLCommandBuffer> pending)
+void mtl_mark_pending(struct mtl_pending *slot, const struct mtl_pending *use)
 {
-    return pending && pending.status < MTLCommandBufferStatusCompleted;
+    [use->cmdbuf retain];
+    [slot->cmdbuf release];
+    *slot = *use;
 }
 
-void mtl_pending_wait(struct mtl_ctx *ctx, id<MTLCommandBuffer> *slot)
+void mtl_pending_release(struct mtl_pending *p)
 {
-    if (!*slot)
+    [p->cmdbuf release];
+    *p = (struct mtl_pending) {0};
+}
+
+bool mtl_pending_busy(struct mtl_ctx *ctx, const struct mtl_pending *p)
+{
+    if (!p->cmdbuf)
+        return false;
+    if (ctx->event && p->value)
+        return ctx->event.signaledValue < p->value;
+    return p->cmdbuf.status < MTLCommandBufferStatusCompleted;
+}
+
+void mtl_pending_wait(struct mtl_ctx *ctx, struct mtl_pending *slot)
+{
+    if (!slot->cmdbuf)
         return;
 
-    [*slot waitUntilCompleted];
-    mtl_cmdbuf_check(ctx, *slot);
-    [*slot release];
-    *slot = nil;
+    [slot->cmdbuf waitUntilCompleted];
+    mtl_cmdbuf_check(ctx, slot->cmdbuf);
+    mtl_pending_release(slot);
 }
 
-id<MTLCommandBuffer> mtl_blit_submit(struct mtl_ctx *ctx,
-                                     void (^block)(id<MTLBlitCommandEncoder> enc))
+bool mtl_pending_wait_timeout(struct mtl_ctx *ctx, struct mtl_pending *slot,
+                              uint64_t timeout)
 {
-    id<MTLCommandBuffer> cmdbuf;
+    if (!slot->cmdbuf)
+        return false;
 
+    if (!mtl_pending_busy(ctx, slot)) {
+        mtl_cmdbuf_check(ctx, slot->cmdbuf);
+        mtl_pending_release(slot);
+        return false;
+    }
+
+    if (!timeout)
+        return true;
+
+    if (timeout == UINT64_MAX) {
+        mtl_pending_wait(ctx, slot);
+        return false;
+    }
+
+    bool busy = true;
+    if (ctx->event && slot->value) {
+        if (@available(macOS 12.0, iOS 15.0, *)) {
+            const uint64_t ms = (timeout + 999999) / 1000000;
+            busy = ![ctx->event waitUntilSignaledValue:slot->value timeoutMS:ms];
+        }
+    }
+
+    if (!busy) {
+        mtl_cmdbuf_check(ctx, slot->cmdbuf);
+        mtl_pending_release(slot);
+    }
+
+    return busy;
+}
+
+struct mtl_pending mtl_blit_submit(struct mtl_ctx *ctx,
+                                   void (^block)(id<MTLBlitCommandEncoder> enc))
+{
     @autoreleasepool {
-        cmdbuf = [[ctx->queue commandBuffer] retain];
+        id<MTLCommandBuffer> cmdbuf = [ctx->queue commandBuffer];
         id<MTLBlitCommandEncoder> enc = [cmdbuf blitCommandEncoder];
         block(enc);
         [enc endEncoding];
-        [cmdbuf commit];
+        return mtl_commit(ctx, cmdbuf);
     }
-
-    mtl_mark_pending(&ctx->last_committed, cmdbuf);
-    return cmdbuf;
 }
 
 static int mtl_desc_namespace(pl_gpu gpu, enum pl_desc_type type)

@@ -56,7 +56,7 @@ void mtl_buf_destroy(pl_gpu gpu, pl_buf buf)
 {
     struct pl_buf_mtl *p = PL_PRIV(buf);
     // In-flight command buffers keep the MTLBuffer itself alive
-    [p->pending release];
+    mtl_pending_release(&p->pending);
     [p->buf release];
     pl_free((void *) buf);
 }
@@ -87,7 +87,7 @@ void mtl_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset,
     struct pl_buf_mtl *dstp = PL_PRIV(dst);
     struct pl_buf_mtl *srcp = PL_PRIV(src);
 
-    id<MTLCommandBuffer> cmdbuf = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
+    struct mtl_pending use = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
         [enc copyFromBuffer:srcp->buf
                sourceOffset:src_offset
                    toBuffer:dstp->buf
@@ -95,20 +95,14 @@ void mtl_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset,
                        size:size];
     });
 
-    mtl_mark_pending(&srcp->pending, cmdbuf);
-    mtl_mark_pending(&dstp->pending, cmdbuf);
-    [cmdbuf release];
+    mtl_mark_pending(&srcp->pending, &use);
+    mtl_mark_pending(&dstp->pending, &use);
+    mtl_pending_release(&use);
 }
 
 bool mtl_buf_poll(pl_gpu gpu, pl_buf buf, uint64_t timeout)
 {
     struct mtl_ctx *ctx = mtl_ctx_of(gpu);
     struct pl_buf_mtl *p = PL_PRIV(buf);
-
-    // Metal has no bounded wait on command buffers; only honor the
-    // wait-forever case and otherwise just report the current status
-    if (timeout == UINT64_MAX)
-        mtl_pending_wait(ctx, &p->pending);
-
-    return mtl_pending_busy(p->pending);
+    return mtl_pending_wait_timeout(ctx, &p->pending, timeout);
 }

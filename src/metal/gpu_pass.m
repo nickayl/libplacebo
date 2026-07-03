@@ -496,8 +496,7 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
             }];
         }
 
-        [cmdbuf commit];
-        mtl_mark_pending(&ctx->last_committed, cmdbuf);
+        struct mtl_pending use = mtl_commit(ctx, cmdbuf);
 
         // Track the last GPU use of everything this pass touches, so CPU
         // accesses and polls can synchronize against it
@@ -508,13 +507,13 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
             case PL_DESC_SAMPLED_TEX:
             case PL_DESC_STORAGE_IMG: {
                 struct pl_tex_mtl *texp = PL_PRIV((pl_tex) db->object);
-                mtl_mark_pending(&texp->pending, cmdbuf);
+                mtl_mark_pending(&texp->pending, &use);
                 break;
             }
             case PL_DESC_BUF_UNIFORM:
             case PL_DESC_BUF_STORAGE: {
                 struct pl_buf_mtl *bufp = PL_PRIV((pl_buf) db->object);
-                mtl_mark_pending(&bufp->pending, cmdbuf);
+                mtl_mark_pending(&bufp->pending, &use);
                 break;
             }
             default:
@@ -524,16 +523,18 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
 
         if (pass->params.type == PL_PASS_RASTER) {
             struct pl_tex_mtl *targetp = PL_PRIV(params->target);
-            mtl_mark_pending(&targetp->pending, cmdbuf);
+            mtl_mark_pending(&targetp->pending, &use);
 
             if (params->vertex_buf) {
                 struct pl_buf_mtl *bufp = PL_PRIV(params->vertex_buf);
-                mtl_mark_pending(&bufp->pending, cmdbuf);
+                mtl_mark_pending(&bufp->pending, &use);
             }
             if (params->index_buf) {
                 struct pl_buf_mtl *bufp = PL_PRIV(params->index_buf);
-                mtl_mark_pending(&bufp->pending, cmdbuf);
+                mtl_mark_pending(&bufp->pending, &use);
             }
         }
+
+        mtl_pending_release(&use);
     }
 }

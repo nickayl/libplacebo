@@ -162,11 +162,11 @@ static bool mtl_sw_submit_frame(pl_swapchain sw)
     @autoreleasepool {
         id<MTLCommandBuffer> cmdbuf = [ctx->queue commandBuffer];
         [cmdbuf presentDrawable:p->drawable];
-        [cmdbuf commit];
 
-        mtl_mark_pending(&ctx->last_committed, cmdbuf);
+        struct mtl_pending use = mtl_commit(ctx, cmdbuf);
         [p->last_present release];
-        p->last_present = [cmdbuf retain];
+        p->last_present = [use.cmdbuf retain];
+        mtl_pending_release(&use);
     }
 
     pl_tex_destroy(sw->gpu, &p->fbo);
