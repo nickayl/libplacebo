@@ -128,7 +128,7 @@ static enum pl_fmt_caps mtl_fmt_caps(const struct mtl_fmt_map *map, bool fl32_fi
 void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
 {
     bool fl32_filter = false;
-    if (@available(macOS 11.0, iOS 14.0, *))
+    if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *))
         fl32_filter = dev.supports32BitFloatFiltering;
 
     PL_ARRAY(pl_fmt) formats = {0};

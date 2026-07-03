@@ -239,7 +239,7 @@ bool mtl_pending_wait_timeout(struct mtl_ctx *ctx, struct mtl_pending *slot,
 
     bool busy = true;
     if (ctx->event && slot->value) {
-        if (@available(macOS 12.0, iOS 15.0, *)) {
+        if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
             const uint64_t ms = (timeout + 999999) / 1000000;
             busy = ![ctx->event waitUntilSignaledValue:slot->value timeoutMS:ms];
         }

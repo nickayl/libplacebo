@@ -64,7 +64,7 @@ static void mtl_sw_configure(pl_swapchain sw, const struct pl_color_space *csp)
     const char *desc = "SDR";
 
     if (csp && pl_color_transfer_is_hdr(csp->transfer)) {
-        if (@available(macOS 11.0, iOS 14.0, *)) {
+        if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *)) {
             switch (csp->transfer) {
             case PL_COLOR_TRC_PQ:
                 pixfmt = MTLPixelFormatRGB10A2Unorm;
@@ -109,11 +109,11 @@ static void mtl_sw_configure(pl_swapchain sw, const struct pl_color_space *csp)
 #if TARGET_OS_OSX
         layer.wantsExtendedDynamicRangeContent = edr;
 #else
-        if (@available(iOS 16.0, *))
+        if (@available(iOS 16.0, tvOS 16.0, *))
             layer.wantsExtendedDynamicRangeContent = edr;
 #endif
 
-        if (@available(macOS 10.15, iOS 16.0, *)) {
+        if (@available(macOS 10.15, iOS 16.0, tvOS 16.0, *)) {
             CAEDRMetadata *metadata = nil;
             if (out.transfer == PL_COLOR_TRC_PQ && out.hdr.max_luma > 0) {
                 metadata = [CAEDRMetadata HDR10MetadataWithMinLuminance:out.hdr.min_luma
