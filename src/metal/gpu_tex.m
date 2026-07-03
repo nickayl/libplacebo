@@ -60,6 +60,16 @@ pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
             return NULL;
         }
 
+        if (mtex.width != (NSUInteger) params->w ||
+            mtex.height != (NSUInteger) PL_MAX(params->h, 1) ||
+            mtex.depth != (NSUInteger) PL_MAX(params->d, 1))
+        {
+            PL_ERR(gpu, "Imported texture size %dx%dx%d does not match "
+                   "%dx%dx%d!", (int) mtex.width, (int) mtex.height,
+                   (int) mtex.depth, params->w, params->h, params->d);
+            return NULL;
+        }
+
         struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_mtl);
         struct pl_tex_mtl *texp = PL_PRIV(tex);
         texp->tex = [mtex retain];
