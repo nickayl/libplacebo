@@ -294,6 +294,35 @@ static ident_t texel_scale(pl_shader sh, int lut_size, bool normalized)
     return name;
 }
 
+// IEEE 754 single -> half, round-to-nearest-even
+static inline uint16_t f32_to_f16(float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+
+    const uint32_t sign = (bits >> 16) & 0x8000u;
+    bits &= 0x7FFFFFFFu;
+
+    if (bits >= 0x7F800000u) // inf / nan
+        return sign | 0x7C00u | (bits > 0x7F800000u ? 0x200u : 0u);
+    if (bits >= 0x477FF000u) // overflows half range
+        return sign | 0x7C00u;
+    if (bits < 0x38800000u) { // subnormal (or zero) in half
+        const uint32_t shift = 126u - (bits >> 23);
+        if (shift > 24u)
+            return sign;
+        uint32_t mant = (bits & 0x7FFFFFu) | 0x800000u;
+        const uint32_t half = mant >> (shift + 1);
+        const uint32_t rem = mant & ((2u << shift) - 1);
+        return sign | (half + ((rem > (1u << shift)) ||
+                               (rem == (1u << shift) && (half & 1u))));
+    }
+
+    bits += 0xC8000000u; // rebias exponent
+    const uint32_t half = (bits + 0xFFFu + ((bits >> 13) & 1u)) >> 13;
+    return sign | half;
+}
+
 struct sh_lut_obj {
     enum sh_lut_type type;
     enum sh_lut_method method;
@@ -415,11 +444,19 @@ next_dim: ; // `continue` out of the inner loop
         }
     }
 
+    bool texfmt_fp16 = false;
     if (texdim && !texfmt) {
         texfmt = pl_find_fmt(gpu, fmt_type[vartype], params->comps,
                              vartype == PL_VAR_FLOAT ? 16 : 32,
                              pl_var_type_size(vartype) * 8,
                              texcaps);
+
+        // Fall back to a half-float texture (converting the LUT data on
+        // upload) for float LUTs on GPUs without e.g. filterable fp32
+        if (!texfmt && vartype == PL_VAR_FLOAT) {
+            texfmt = pl_find_fmt(gpu, PL_FMT_FLOAT, params->comps, 16, 16, texcaps);
+            texfmt_fp16 = !!texfmt;
+        }
     }
 
     enum sh_lut_type type = params->lut_type;
@@ -474,6 +511,7 @@ next_dim: ; // `continue` out of the inner loop
         if (type == SH_LUT_TEXTURE)
             el_size = texfmt->texel_size;
 
+        const bool convert_fp16 = type == SH_LUT_TEXTURE && texfmt_fp16;
         size_t buf_size = size * el_size;
         if (pl_cache_get(params->cache, &obj) && obj.size == buf_size) {
             PL_DEBUG(sh, "Re-using cached LUT (0x%"PRIx64") with size %zu",
@@ -482,7 +520,18 @@ next_dim: ; // `continue` out of the inner loop
             PL_DEBUG(sh, "LUT invalidated, regenerating..");
             pl_cache_obj_resize(NULL, &obj, buf_size);
             pl_clock_t start = pl_clock_now();
-            params->fill(obj.data, params);
+            if (convert_fp16) {
+                // `fill` produces floats; convert to half for the texture
+                const size_t vals = (size_t) size * params->comps;
+                float *tmp = pl_alloc(NULL, vals * sizeof(float));
+                params->fill(tmp, params);
+                uint16_t *dst = obj.data;
+                for (size_t i = 0; i < vals; i++)
+                    dst[i] = f32_to_f16(tmp[i]);
+                pl_free(tmp);
+            } else {
+                params->fill(obj.data, params);
+            }
             pl_log_cpu_time(sh->log, start, pl_clock_now(), "generating shader LUT");
         }
 
