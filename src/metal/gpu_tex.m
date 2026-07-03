@@ -129,6 +129,62 @@ void mtl_tex_destroy(pl_gpu gpu, pl_tex tex)
     pl_free((void *) tex);
 }
 
+pl_tex pl_mtl_wrap(pl_gpu gpu, const struct pl_mtl_wrap_params *params)
+{
+    id<MTLTexture> mtex = params->tex;
+
+    pl_fmt fmt = NULL;
+    for (int i = 0; i < gpu->num_formats; i++) {
+        const struct pl_fmt_mtl *fmtp = PL_PRIV(gpu->formats[i]);
+        if (fmtp->mtl_fmt != MTLPixelFormatInvalid &&
+            fmtp->mtl_fmt == mtex.pixelFormat)
+        {
+            fmt = gpu->formats[i];
+            break;
+        }
+    }
+
+    if (!fmt) {
+        PL_ERR(gpu, "Failed mapping MTLPixelFormat %lu to a pl_fmt!",
+               (unsigned long) mtex.pixelFormat);
+        return NULL;
+    }
+
+    if (mtex.mipmapLevelCount > 1 || mtex.sampleCount > 1) {
+        PL_ERR(gpu, "Mipmapped or multisampled textures cannot be wrapped!");
+        return NULL;
+    }
+
+    struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_mtl);
+    struct pl_tex_mtl *p = PL_PRIV(tex);
+    p->tex = [mtex retain];
+
+    const MTLTextureUsage usage = mtex.usage;
+    const bool host_access = mtex.storageMode != MTLStorageModePrivate;
+
+    tex->sampler_type = PL_SAMPLER_NORMAL;
+    tex->params = (struct pl_tex_params) {
+        .w = mtex.width,
+        .h = mtex.textureType != MTLTextureType1D ? mtex.height : 0,
+        .d = mtex.textureType == MTLTextureType3D ? mtex.depth : 0,
+        .format        = fmt,
+        .sampleable    = (usage & MTLTextureUsageShaderRead) &&
+                         (fmt->caps & PL_FMT_CAP_SAMPLEABLE),
+        .renderable    = (usage & MTLTextureUsageRenderTarget) &&
+                         (fmt->caps & PL_FMT_CAP_RENDERABLE),
+        .storable      = (usage & MTLTextureUsageShaderWrite) &&
+                         (fmt->caps & PL_FMT_CAP_STORABLE),
+        .blit_src      = fmt->caps & PL_FMT_CAP_BLITTABLE,
+        .blit_dst      = (usage & MTLTextureUsageRenderTarget) &&
+                         (fmt->caps & PL_FMT_CAP_BLITTABLE),
+        .host_writable = host_access,
+        .host_readable = host_access,
+        .debug_tag     = PL_DEBUG_TAG,
+    };
+
+    return tex;
+}
+
 void mtl_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color)
 {
     struct mtl_ctx *ctx = mtl_ctx_of(gpu);

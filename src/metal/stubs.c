@@ -39,3 +39,8 @@ pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
 {
     pl_unreachable();
 }
+
+pl_tex pl_mtl_wrap(pl_gpu gpu, const struct pl_mtl_wrap_params *params)
+{
+    pl_unreachable();
+}

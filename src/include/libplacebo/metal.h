@@ -28,11 +28,14 @@ PL_API_BEGIN
 // pointers that can be bridged from `id<MTLDevice>` etc. by the caller.
 #ifdef __OBJC__
 @protocol MTLDevice;
+@protocol MTLTexture;
 @class CAMetalLayer;
 typedef id<MTLDevice> pl_mtl_device;
+typedef id<MTLTexture> pl_mtl_tex;
 typedef CAMetalLayer *pl_mtl_layer;
 #else
 typedef void *pl_mtl_device;
+typedef void *pl_mtl_tex;
 typedef void *pl_mtl_layer;
 #endif
 
@@ -83,6 +86,21 @@ struct pl_mtl_swapchain_params {
 // Returns NULL on failure.
 PL_API pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
     const struct pl_mtl_swapchain_params *params);
+
+struct pl_mtl_wrap_params {
+    // The MTLTexture to wrap. Must have been created by the same device used
+    // by `gpu`, with a pixel format corresponding to one of the GPU's `pl_fmt`
+    // formats, and must not be mipmapped or multisampled.
+    pl_mtl_tex tex;
+};
+
+#define pl_mtl_wrap_params(...) (&(struct pl_mtl_wrap_params) { __VA_ARGS__ })
+
+// Wraps an external texture into a pl_tex abstraction. `pl_mtl_wrap` takes a
+// reference to the texture, which is released when `pl_tex_destroy` is called.
+// The resulting capabilities are inferred from the texture's usage flags and
+// storage mode. Returns NULL on failure.
+PL_API pl_tex pl_mtl_wrap(pl_gpu gpu, const struct pl_mtl_wrap_params *params);
 
 PL_API_END
 
