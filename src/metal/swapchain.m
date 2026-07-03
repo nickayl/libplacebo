@@ -164,6 +164,7 @@ static bool mtl_sw_submit_frame(pl_swapchain sw)
         [cmdbuf presentDrawable:p->drawable];
         [cmdbuf commit];
 
+        mtl_mark_pending(&ctx->last_committed, cmdbuf);
         [p->last_present release];
         p->last_present = [cmdbuf retain];
     }

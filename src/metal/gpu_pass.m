@@ -488,11 +488,52 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
             [enc endEncoding];
         }
 
-        [cmdbuf commit];
-        [cmdbuf waitUntilCompleted];
-        mtl_cmdbuf_check(ctx, cmdbuf);
+        // Release the one-shot upload buffers once the GPU is done with them
+        if (vbuf_tmp || ibuf_tmp) {
+            [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+                [vbuf_tmp release];
+                [ibuf_tmp release];
+            }];
+        }
 
-        [vbuf_tmp release];
-        [ibuf_tmp release];
+        [cmdbuf commit];
+        mtl_mark_pending(&ctx->last_committed, cmdbuf);
+
+        // Track the last GPU use of everything this pass touches, so CPU
+        // accesses and polls can synchronize against it
+        for (int i = 0; i < pass->params.num_descriptors; i++) {
+            const struct pl_desc *desc = &pass->params.descriptors[i];
+            const struct pl_desc_binding *db = &params->desc_bindings[i];
+            switch (desc->type) {
+            case PL_DESC_SAMPLED_TEX:
+            case PL_DESC_STORAGE_IMG: {
+                struct pl_tex_mtl *texp = PL_PRIV((pl_tex) db->object);
+                mtl_mark_pending(&texp->pending, cmdbuf);
+                break;
+            }
+            case PL_DESC_BUF_UNIFORM:
+            case PL_DESC_BUF_STORAGE: {
+                struct pl_buf_mtl *bufp = PL_PRIV((pl_buf) db->object);
+                mtl_mark_pending(&bufp->pending, cmdbuf);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+
+        if (pass->params.type == PL_PASS_RASTER) {
+            struct pl_tex_mtl *targetp = PL_PRIV(params->target);
+            mtl_mark_pending(&targetp->pending, cmdbuf);
+
+            if (params->vertex_buf) {
+                struct pl_buf_mtl *bufp = PL_PRIV(params->vertex_buf);
+                mtl_mark_pending(&bufp->pending, cmdbuf);
+            }
+            if (params->index_buf) {
+                struct pl_buf_mtl *bufp = PL_PRIV(params->index_buf);
+                mtl_mark_pending(&bufp->pending, cmdbuf);
+            }
+        }
     }
 }

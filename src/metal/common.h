@@ -43,6 +43,7 @@ struct mtl_ctx {
     struct pl_mtl_t *mtl;
     id<MTLDevice> dev;
     id<MTLCommandQueue> queue;
+    id<MTLCommandBuffer> last_committed; // most recent commit on `queue`
 };
 
 struct pl_gpu_mtl {
@@ -65,10 +66,12 @@ struct pl_fmt_mtl {
 
 struct pl_buf_mtl {
     id<MTLBuffer> buf;
+    id<MTLCommandBuffer> pending; // last GPU use, or nil
 };
 
 struct pl_tex_mtl {
     id<MTLTexture> tex;
+    id<MTLCommandBuffer> pending; // last GPU use, or nil
 };
 
 struct pl_pass_mtl {
@@ -81,9 +84,24 @@ struct pl_pass_mtl {
 pl_gpu mtl_gpu_create(struct mtl_ctx *ctx);
 void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev);
 
-// Encodes `block` into a one-shot blit command buffer and blocks until the
-// GPU finished executing it
-void mtl_blit_sync(struct mtl_ctx *ctx, void (^block)(id<MTLBlitCommandEncoder> enc));
+// GPU-GPU hazards are handled by Metal's automatic hazard tracking (all work
+// goes through one queue); these helpers cover CPU<->GPU coherency. Every
+// resource carries a `pending` slot referencing the last command buffer that
+// used it on the GPU: CPU access waits on it, polls query it.
+
+// Retains `cmdbuf` as the new pending use in `slot`
+void mtl_mark_pending(id<MTLCommandBuffer> *slot, id<MTLCommandBuffer> cmdbuf);
+
+// Whether the pending use (if any) is still executing
+bool mtl_pending_busy(id<MTLCommandBuffer> pending);
+
+// Blocks until the pending use (if any) completed, then clears the slot
+void mtl_pending_wait(struct mtl_ctx *ctx, id<MTLCommandBuffer> *slot);
+
+// Encodes `block` into a one-shot blit command buffer and commits it without
+// waiting. Returns the committed command buffer, retained (+1)
+id<MTLCommandBuffer> mtl_blit_submit(struct mtl_ctx *ctx,
+                                     void (^block)(id<MTLBlitCommandEncoder> enc));
 
 // Logs an error if the completed command buffer failed to execute
 void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf);
@@ -97,12 +115,14 @@ bool mtl_buf_read(pl_gpu gpu, pl_buf buf, size_t buf_offset,
                   void *dest, size_t size);
 void mtl_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset,
                   pl_buf src, size_t src_offset, size_t size);
+bool mtl_buf_poll(pl_gpu gpu, pl_buf buf, uint64_t timeout);
 pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params);
 void mtl_tex_destroy(pl_gpu gpu, pl_tex tex);
 void mtl_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color);
 void mtl_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params);
 bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params);
 bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params);
+bool mtl_tex_poll(pl_gpu gpu, pl_tex tex, uint64_t timeout);
 pl_pass mtl_pass_create(pl_gpu gpu, const struct pl_pass_params *params);
 void mtl_pass_destroy(pl_gpu gpu, pl_pass pass);
 void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params);

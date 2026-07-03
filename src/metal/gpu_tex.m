@@ -149,8 +149,21 @@ pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
 void mtl_tex_destroy(pl_gpu gpu, pl_tex tex)
 {
     struct pl_tex_mtl *p = PL_PRIV(tex);
+    // In-flight command buffers keep the MTLTexture itself alive
+    [p->pending release];
     [p->tex release];
     pl_free((void *) tex);
+}
+
+bool mtl_tex_poll(pl_gpu gpu, pl_tex tex, uint64_t timeout)
+{
+    struct mtl_ctx *ctx = mtl_ctx_of(gpu);
+    struct pl_tex_mtl *p = PL_PRIV(tex);
+
+    if (timeout == UINT64_MAX)
+        mtl_pending_wait(ctx, &p->pending);
+
+    return mtl_pending_busy(p->pending);
 }
 
 pl_tex pl_mtl_wrap(pl_gpu gpu, const struct pl_mtl_wrap_params *params)
@@ -247,8 +260,8 @@ void mtl_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color)
 #endif
 
         [cmdbuf commit];
-        [cmdbuf waitUntilCompleted];
-        mtl_cmdbuf_check(ctx, cmdbuf);
+        mtl_mark_pending(&ctx->last_committed, cmdbuf);
+        mtl_mark_pending(&p->pending, cmdbuf);
     }
 }
 
@@ -265,7 +278,7 @@ void mtl_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params)
     // Same size, no flips: a plain blit-encoder copy. Everything else
     // (scaling, mirroring) goes through the shared raster-pass helper.
     if (sw == dw && sh == dh && sd == dd && sw > 0 && sh >= 0 && sd >= 0) {
-        mtl_blit_sync(ctx, ^(id<MTLBlitCommandEncoder> enc) {
+        id<MTLCommandBuffer> cmdbuf = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
             [enc copyFromTexture:srcp->tex
                      sourceSlice:0
                      sourceLevel:0
@@ -280,6 +293,9 @@ void mtl_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params)
                 [enc synchronizeResource:dstp->tex];
 #endif
         });
+        mtl_mark_pending(&srcp->pending, cmdbuf);
+        mtl_mark_pending(&dstp->pending, cmdbuf);
+        [cmdbuf release];
         return;
     }
 
@@ -303,7 +319,7 @@ bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
         // The blit encoder requires texel-aligned pitches; fall back to the
         // CPU path through the shared-storage contents pointer otherwise
         if (params->row_pitch % fmt->texel_size == 0) {
-            mtl_blit_sync(ctx, ^(id<MTLBlitCommandEncoder> enc) {
+            id<MTLCommandBuffer> cmdbuf = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
                 [enc copyFromBuffer:bufp->buf
                        sourceOffset:params->buf_offset
                   sourceBytesPerRow:params->row_pitch
@@ -319,9 +335,14 @@ bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
                     [enc synchronizeResource:p->tex];
 #endif
             });
+            mtl_mark_pending(&bufp->pending, cmdbuf);
+            mtl_mark_pending(&p->pending, cmdbuf);
+            [cmdbuf release];
             return true;
         }
 
+        mtl_pending_wait(ctx, &bufp->pending);
+        mtl_pending_wait(ctx, &p->pending);
         const uint8_t *src = (const uint8_t *) bufp->buf.contents + params->buf_offset;
         [p->tex replaceRegion:region
                   mipmapLevel:0
@@ -332,6 +353,7 @@ bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
         return true;
     }
 
+    mtl_pending_wait(ctx, &p->pending);
     [p->tex replaceRegion:region
               mipmapLevel:0
                     slice:0
@@ -356,7 +378,7 @@ bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
         struct pl_buf_mtl *bufp = PL_PRIV(params->buf);
 
         if (params->row_pitch % fmt->texel_size == 0) {
-            mtl_blit_sync(ctx, ^(id<MTLBlitCommandEncoder> enc) {
+            id<MTLCommandBuffer> cmdbuf = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
                 [enc copyFromTexture:p->tex
                          sourceSlice:0
                          sourceLevel:0
@@ -367,9 +389,14 @@ bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
               destinationBytesPerRow:params->row_pitch
             destinationBytesPerImage:params->depth_pitch];
             });
+            mtl_mark_pending(&p->pending, cmdbuf);
+            mtl_mark_pending(&bufp->pending, cmdbuf);
+            [cmdbuf release];
             return true;
         }
 
+        mtl_pending_wait(ctx, &p->pending);
+        mtl_pending_wait(ctx, &bufp->pending);
         uint8_t *dst = (uint8_t *) bufp->buf.contents + params->buf_offset;
         [p->tex getBytes:dst
              bytesPerRow:row_pitch
@@ -380,6 +407,7 @@ bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
         return true;
     }
 
+    mtl_pending_wait(ctx, &p->pending);
     [p->tex getBytes:params->ptr
          bytesPerRow:row_pitch
        bytesPerImage:depth_pitch

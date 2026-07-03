@@ -56,7 +56,8 @@ pl_gpu mtl_gpu_create(struct mtl_ctx *ctx)
     }
 
     gpu->limits = (struct pl_gpu_limits) {
-        .thread_safe        = true,
+        // The pending-use tracking is not internally synchronized
+        .thread_safe        = false,
 
         // pl_buf
         .max_buf_size       = dev.maxBufferLength,
@@ -134,6 +135,11 @@ static void mtl_gpu_destroy(pl_gpu gpu)
 {
     struct pl_gpu_mtl *p = PL_PRIV(gpu);
 
+    // Command buffers on one queue complete in FIFO order, so draining the
+    // most recent commit drains everything
+    if (p->ctx)
+        mtl_pending_wait(p->ctx, &p->ctx->last_committed);
+
     for (int s = 0; s < PL_TEX_SAMPLE_MODE_COUNT; s++) {
         for (int a = 0; a < PL_TEX_ADDRESS_MODE_COUNT; a++)
             [p->samplers[s][a] release];
@@ -162,17 +168,44 @@ void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
     }
 }
 
-void mtl_blit_sync(struct mtl_ctx *ctx, void (^block)(id<MTLBlitCommandEncoder> enc))
+void mtl_mark_pending(id<MTLCommandBuffer> *slot, id<MTLCommandBuffer> cmdbuf)
 {
+    [cmdbuf retain];
+    [*slot release];
+    *slot = cmdbuf;
+}
+
+bool mtl_pending_busy(id<MTLCommandBuffer> pending)
+{
+    return pending && pending.status < MTLCommandBufferStatusCompleted;
+}
+
+void mtl_pending_wait(struct mtl_ctx *ctx, id<MTLCommandBuffer> *slot)
+{
+    if (!*slot)
+        return;
+
+    [*slot waitUntilCompleted];
+    mtl_cmdbuf_check(ctx, *slot);
+    [*slot release];
+    *slot = nil;
+}
+
+id<MTLCommandBuffer> mtl_blit_submit(struct mtl_ctx *ctx,
+                                     void (^block)(id<MTLBlitCommandEncoder> enc))
+{
+    id<MTLCommandBuffer> cmdbuf;
+
     @autoreleasepool {
-        id<MTLCommandBuffer> cmdbuf = [ctx->queue commandBuffer];
+        cmdbuf = [[ctx->queue commandBuffer] retain];
         id<MTLBlitCommandEncoder> enc = [cmdbuf blitCommandEncoder];
         block(enc);
         [enc endEncoding];
         [cmdbuf commit];
-        [cmdbuf waitUntilCompleted];
-        mtl_cmdbuf_check(ctx, cmdbuf);
     }
+
+    mtl_mark_pending(&ctx->last_committed, cmdbuf);
+    return cmdbuf;
 }
 
 static int mtl_desc_namespace(pl_gpu gpu, enum pl_desc_type type)
@@ -184,7 +217,8 @@ static int mtl_desc_namespace(pl_gpu gpu, enum pl_desc_type type)
 
 static void mtl_gpu_finish(pl_gpu gpu)
 {
-    // no-op (no work is submitted yet)
+    struct pl_gpu_mtl *p = PL_PRIV(gpu);
+    mtl_pending_wait(p->ctx, &p->ctx->last_committed);
 }
 
 static const struct pl_gpu_fns pl_fns_mtl = {
@@ -195,11 +229,13 @@ static const struct pl_gpu_fns pl_fns_mtl = {
     .tex_blit       = mtl_tex_blit,
     .tex_upload     = mtl_tex_upload,
     .tex_download   = mtl_tex_download,
+    .tex_poll       = mtl_tex_poll,
     .buf_create     = mtl_buf_create,
     .buf_destroy    = mtl_buf_destroy,
     .buf_write      = mtl_buf_write,
     .buf_read       = mtl_buf_read,
     .buf_copy       = mtl_buf_copy,
+    .buf_poll       = mtl_buf_poll,
     .desc_namespace = mtl_desc_namespace,
     .pass_create    = mtl_pass_create,
     .pass_destroy   = mtl_pass_destroy,
