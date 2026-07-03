@@ -493,6 +493,33 @@ void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
             [enc endEncoding];
         }
 
+#if TARGET_OS_OSX
+        // Keep CPU views coherent after GPU writes on managed storage
+        id<MTLBlitCommandEncoder> sync = nil;
+        #define MTL_SYNC_MANAGED(mtltex)                                    \
+            do {                                                            \
+                if ((mtltex).storageMode == MTLStorageModeManaged) {        \
+                    if (!sync)                                              \
+                        sync = [cmdbuf blitCommandEncoder];                 \
+                    [sync synchronizeResource:(mtltex)];                    \
+                }                                                           \
+            } while (0)
+
+        if (pass->params.type == PL_PASS_RASTER) {
+            struct pl_tex_mtl *targetp = PL_PRIV(params->target);
+            MTL_SYNC_MANAGED(targetp->tex);
+        }
+        for (int i = 0; i < pass->params.num_descriptors; i++) {
+            if (pass->params.descriptors[i].type != PL_DESC_STORAGE_IMG)
+                continue;
+            struct pl_tex_mtl *texp = PL_PRIV((pl_tex) params->desc_bindings[i].object);
+            MTL_SYNC_MANAGED(texp->tex);
+        }
+        if (sync)
+            [sync endEncoding];
+        #undef MTL_SYNC_MANAGED
+#endif
+
         // Release the one-shot upload buffers once the GPU is done with them
         if (vbuf_tmp || ibuf_tmp) {
             [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
