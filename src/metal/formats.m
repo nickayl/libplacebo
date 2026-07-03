@@ -118,44 +118,18 @@ static enum pl_fmt_caps mtl_fmt_caps(const struct mtl_fmt_map *map, bool fl32_fi
     return caps;
 }
 
-// Formats supporting function texture read-write per the Metal feature tables
-static bool mtl_fmt_readwrite(const char *name, MTLReadWriteTextureTier tier)
-{
-    static const char *tier1[] = {
-        "r32f", "r32u", "r32i",
-    };
-    static const char *tier2[] = {
-        "rgba32f", "rgba32u", "rgba32i", "rgba16hf", "rgba16u", "rgba16i",
-        "rgba8", "rgba8u", "rgba8i", "r16hf", "r16u", "r16i",
-        "r8", "r8u", "r8i",
-    };
-
-    if (tier >= MTLReadWriteTextureTier1) {
-        for (int i = 0; i < PL_ARRAY_SIZE(tier1); i++) {
-            if (!strcmp(name, tier1[i]))
-                return true;
-        }
-    }
-
-    if (tier >= MTLReadWriteTextureTier2) {
-        for (int i = 0; i < PL_ARRAY_SIZE(tier2); i++) {
-            if (!strcmp(name, tier2[i]))
-                return true;
-        }
-    }
-
-    return false;
-}
+// Note: PL_FMT_CAP_READWRITE is deliberately not advertised. Metal's
+// read-write texture tiers cover R and RGBA variants but not RG, and
+// heterogeneous caps between component-count siblings of the same format
+// family break `pl_renderer`'s FBO format probing (which matches the full
+// cap set of the 4-component format). Revisit if read-write storage images
+// become load-bearing.
 
 void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
 {
     bool fl32_filter = false;
     if (@available(macOS 11.0, iOS 14.0, *))
         fl32_filter = dev.supports32BitFloatFiltering;
-
-    MTLReadWriteTextureTier rw_tier = MTLReadWriteTextureTierNone;
-    if (@available(macOS 10.13, iOS 11.0, *))
-        rw_tier = dev.readWriteTextureSupport;
 
     PL_ARRAY(pl_fmt) formats = {0};
 
@@ -188,11 +162,8 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
         fmt->glsl_type = pl_var_glsl_type_name(pl_var_from_fmt(fmt, ""));
         fmt->glsl_format = pl_fmt_glsl_format(fmt, map->comps);
         fmt->fourcc = pl_fmt_fourcc(fmt);
-        if (gpu->glsl.compute && fmt->glsl_format) {
+        if (gpu->glsl.compute && fmt->glsl_format)
             fmt->caps |= PL_FMT_CAP_STORABLE;
-            if (mtl_fmt_readwrite(map->name, rw_tier))
-                fmt->caps |= PL_FMT_CAP_READWRITE;
-        }
         PL_ARRAY_APPEND(gpu, formats, fmt);
     }
 
