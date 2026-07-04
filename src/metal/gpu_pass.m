@@ -184,6 +184,17 @@ pl_pass mtl_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
     pl_assert(params->num_variables == 0); // max_variable_comps == 0
     pl_assert(params->num_constants == 0); // max_constants == 0
 
+    // The top argument-table slots are reserved for vertex data and push
+    // constants; descriptors map 1:1 onto the remaining indices
+    for (int i = 0; i < params->num_descriptors; i++) {
+        if (params->descriptors[i].binding >= MTL_VBUF_INDEX) {
+            PL_ERR(gpu, "Descriptor binding %d collides with the reserved "
+                   "argument-table slots (max %d)!",
+                   params->descriptors[i].binding, MTL_VBUF_INDEX - 1);
+            return NULL;
+        }
+    }
+
     struct pl_pass_t *pass = pl_zalloc_obj(NULL, pass, struct pl_pass_mtl);
     pass->params = pl_pass_params_copy(pass, params);
     struct pl_pass_mtl *p = PL_PRIV(pass);
@@ -277,6 +288,18 @@ pl_pass mtl_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
             if (!p->cps) {
                 PL_ERR(gpu, "Failed creating compute pipeline state: %s",
                        err.localizedDescription.UTF8String);
+                goto error;
+            }
+
+            // The per-pipeline thread limit can drop below the advertised
+            // device maximum under register pressure
+            const NSUInteger threads = comp.group_size.width *
+                                       comp.group_size.height *
+                                       comp.group_size.depth;
+            if (threads > p->cps.maxTotalThreadsPerThreadgroup) {
+                PL_ERR(gpu, "Compute group size %zu exceeds the pipeline "
+                       "limit %zu!", (size_t) threads,
+                       (size_t) p->cps.maxTotalThreadsPerThreadgroup);
                 goto error;
             }
 
