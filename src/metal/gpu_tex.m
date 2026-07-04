@@ -322,9 +322,11 @@ bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
     if (params->buf) {
         struct pl_buf_mtl *bufp = PL_PRIV(params->buf);
 
-        // The blit encoder requires texel-aligned pitches; fall back to the
-        // CPU path through the shared-storage contents pointer otherwise
-        if (params->row_pitch % fmt->texel_size == 0) {
+        // The blit encoder requires texel-aligned pitches and offsets; fall
+        // back to the CPU path through the shared-storage contents otherwise
+        if (params->row_pitch % fmt->texel_size == 0 &&
+            params->buf_offset % fmt->texel_size == 0)
+        {
             struct mtl_pending use = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
                 [enc copyFromBuffer:bufp->buf
                        sourceOffset:params->buf_offset
@@ -384,7 +386,9 @@ bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
     if (params->buf) {
         struct pl_buf_mtl *bufp = PL_PRIV(params->buf);
 
-        if (params->row_pitch % fmt->texel_size == 0) {
+        if (params->row_pitch % fmt->texel_size == 0 &&
+            params->buf_offset % fmt->texel_size == 0)
+        {
             struct mtl_pending use = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
                 [enc copyFromTexture:p->tex
                          sourceSlice:0
