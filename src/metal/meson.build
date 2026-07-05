@@ -38,7 +38,7 @@ if metal.allowed()
   # Mirror the project-wide C warning setup for the Objective-C sources
   add_project_arguments(build_opts + c_opts, language: 'objc')
   build_deps += [metal_deps, metal_spvc]
-  tests += 'metal.c'
+  tests += ['metal.c', 'metal_swapchain.m']
   sources += [
     'metal/context.m',
     'metal/formats.m',
