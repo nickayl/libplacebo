@@ -78,10 +78,23 @@ PL_API void pl_mtl_destroy(pl_mtl *mtl);
 // the underlying `pl_mtl`. Returns NULL for any other type of `gpu`.
 PL_API pl_mtl pl_mtl_get(pl_gpu gpu);
 
+// Frame-mirror callback for Picture in Picture / AirPlay: invoked after each presented frame with
+// the frame's backing IOSurface (as a void* IOSurfaceRef, retained for the duration of the call)
+// plus its pixel dimensions, so a host can wrap it in a CVPixelBuffer and enqueue it into an
+// AVSampleBufferDisplayLayer. Fired on a GPU-completion thread once the frame has finished
+// rendering; the host must hop to its own queue. `priv` is `frame_callback_priv` from the params.
+typedef void (*pl_mtl_frame_cb)(void *priv, void *iosurface, int width, int height);
+
 struct pl_mtl_swapchain_params {
     // The CAMetalLayer to present to. Required. libplacebo takes a reference
     // to the layer and configures its device and pixel format.
     pl_mtl_layer layer;
+
+    // Optional. When set, each presented frame's backing IOSurface is mirrored to this callback
+    // (see pl_mtl_frame_cb). Requires the layer to allow IOSurface-backed drawables (libplacebo
+    // sets `framebufferOnly = NO`). NULL disables mirroring with zero overhead.
+    pl_mtl_frame_cb frame_callback;
+    void *frame_callback_priv;
 };
 
 #define pl_mtl_swapchain_params(...) (&(struct pl_mtl_swapchain_params) { __VA_ARGS__ })

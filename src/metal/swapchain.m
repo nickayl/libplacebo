@@ -35,6 +35,10 @@ struct mtl_sw_priv {
 
     // most recently committed present, drained on destroy
     id<MTLCommandBuffer> last_present;
+
+    // optional frame-mirror callback (see pl_mtl_swapchain_params.frame_callback)
+    pl_mtl_frame_cb frame_cb;
+    void *frame_cb_priv;
 };
 
 static const struct pl_sw_fns mtl_sw_fns;
@@ -153,6 +157,8 @@ pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
     p->impl = mtl_sw_fns;
     p->ctx = ctx;
     p->layer = [layer retain];
+    p->frame_cb = params->frame_callback;
+    p->frame_cb_priv = params->frame_callback_priv;
     pl_mutex_init(&p->lock);
 
     layer.device = ctx->dev;
@@ -281,6 +287,24 @@ static bool mtl_sw_submit_frame(pl_swapchain sw)
     @autoreleasepool {
         id<MTLCommandBuffer> cmdbuf = [ctx->queue commandBuffer];
         [cmdbuf presentDrawable:p->drawable];
+
+        // Mirror the presented frame's IOSurface to the host callback (PiP / AirPlay). The drawable
+        // texture is IOSurface-backed because framebufferOnly == NO; fire once the GPU has finished
+        // so the surface holds the rendered frame, retaining it across the async hand-off.
+        if (p->frame_cb) {
+            IOSurfaceRef surface = p->drawable.texture.iosurface;
+            if (surface) {
+                CFRetain(surface);
+                const int w = (int) p->drawable.texture.width;
+                const int h = (int) p->drawable.texture.height;
+                const pl_mtl_frame_cb cb = p->frame_cb;
+                void *const cb_priv = p->frame_cb_priv;
+                [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> buf) {
+                    cb(cb_priv, (void *) surface, w, h);
+                    CFRelease(surface);
+                }];
+            }
+        }
 
         struct mtl_pending use = mtl_commit(ctx, cmdbuf);
         [p->last_present release];
