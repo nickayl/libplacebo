@@ -159,6 +159,10 @@ pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
     // Drawables must also work as blit destinations, not just render targets
     layer.framebufferOnly = NO;
 
+    pl_info(ctx->log, "metal: swapchain bound to CAMetalLayer %p (device %s, drawableSize %dx%d)",
+            (void *) layer, ctx->dev.name.UTF8String ? ctx->dev.name.UTF8String : "?",
+            (int) layer.drawableSize.width, (int) layer.drawableSize.height);
+
     mtl_sw_configure(sw, NULL);
     if (!p->fbo_fmt) {
         pl_mutex_destroy(&p->lock);
@@ -208,6 +212,7 @@ static bool mtl_sw_resize(pl_swapchain sw, int *width, int *height)
         const CGSize size = p->layer.drawableSize;
         *width = size.width;
         *height = size.height;
+        pl_debug(sw->log, "metal: swapchain resize -> %dx%d", *width, *height);
     }
 
     pl_mutex_unlock(&p->lock);
@@ -225,6 +230,10 @@ static bool mtl_sw_start_frame(pl_swapchain sw,
         // which is also what paces the rendering loop
         id<CAMetalDrawable> drawable = [[p->layer nextDrawable] retain];
         if (!drawable) {
+            // Normal when the layer is off-screen / backgrounded or its drawable pool is exhausted;
+            // traced (not warned) so a legitimately paused surface does not spam the log.
+            pl_trace(sw->log, "metal: nextDrawable returned nil (drawableSize %dx%d) - skipping frame",
+                     (int) p->layer.drawableSize.width, (int) p->layer.drawableSize.height);
             pl_mutex_unlock(&p->lock);
             return false;
         }
