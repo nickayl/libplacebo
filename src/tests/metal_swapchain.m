@@ -96,9 +96,26 @@ int main()
         REQUIRE_CMP(await_frames(&st, num_frames), ==, num_frames, "d");
         REQUIRE_CMP(atomic_load(&st.bad), ==, 0, "d");
 
+        // With a mirror crop the callback must receive the crop region's dimensions
+        const int crop_w = 160, crop_h = 120;
+        pl_mtl_swapchain_set_frame_mirror_crop(sw, 80, 60, crop_w, crop_h);
+        st.expect_w = crop_w;
+        st.expect_h = crop_h;
+        render_frames(mtl->gpu, sw, 2);
+        REQUIRE_CMP(await_frames(&st, num_frames + 2), ==, num_frames + 2, "d");
+        REQUIRE_CMP(atomic_load(&st.bad), ==, 0, "d");
+
+        // Clearing the crop restores the full-frame mirror
+        pl_mtl_swapchain_set_frame_mirror_crop(sw, 0, 0, 0, 0);
+        st.expect_w = width;
+        st.expect_h = height;
+        render_frames(mtl->gpu, sw, 1);
+        REQUIRE_CMP(await_frames(&st, num_frames + 3), ==, num_frames + 3, "d");
+        REQUIRE_CMP(atomic_load(&st.bad), ==, 0, "d");
+
         // Destroy with the mirror installed must drain cleanly
         pl_swapchain_destroy(&sw);
-        REQUIRE_CMP(atomic_load(&st.frames), ==, num_frames, "d");
+        REQUIRE_CMP(atomic_load(&st.frames), ==, num_frames + 3, "d");
     }
 
     pl_mtl_destroy(&mtl);

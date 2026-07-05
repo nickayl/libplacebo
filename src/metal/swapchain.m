@@ -51,11 +51,22 @@ struct mtl_sw_priv {
 
     // IOSurface of the in-flight offscreen frame (NULL when rendering to a drawable)
     IOSurfaceRef frame_surface;
+
+    // mirror crop in surface pixels (empty = full frame), see
+    // pl_mtl_swapchain_set_frame_mirror_crop
+    struct pl_rect2d mirror_crop;
+
+    // cropped-mirror pool: BGRA8 blit targets handed to the callback when a crop is set
+    IOSurfaceRef crop_surfaces[3];
+    pl_tex crop_textures[3];
+    int crop_w, crop_h;
+    int crop_idx;
 };
 
 static const struct pl_sw_fns mtl_sw_fns;
 
 static void mtl_sw_release_mirror_pool(pl_swapchain sw);
+static void mtl_sw_release_crop_pool(pl_swapchain sw);
 
 static pl_fmt mtl_sw_find_fmt(pl_gpu gpu, MTLPixelFormat pixfmt)
 {
@@ -215,6 +226,7 @@ static void mtl_sw_destroy(pl_swapchain sw)
         pl_tex_destroy(sw->gpu, &p->fbo);
     [p->drawable release];
     mtl_sw_release_mirror_pool(sw);
+    mtl_sw_release_crop_pool(sw);
 
     [p->layer release];
     pl_mutex_destroy(&p->lock);
@@ -306,6 +318,79 @@ fail:
     return false;
 }
 
+static void mtl_sw_release_crop_pool(pl_swapchain sw)
+{
+    struct mtl_sw_priv *p = PL_PRIV(sw);
+    for (int i = 0; i < (int) PL_ARRAY_SIZE(p->crop_textures); i++) {
+        if (p->crop_textures[i])
+            pl_tex_destroy(sw->gpu, &p->crop_textures[i]);
+        if (p->crop_surfaces[i]) {
+            CFRelease(p->crop_surfaces[i]);
+            p->crop_surfaces[i] = NULL;
+        }
+    }
+    p->crop_w = p->crop_h = 0;
+    p->crop_idx = 0;
+}
+
+static bool mtl_sw_ensure_crop_pool(pl_swapchain sw, int w, int h)
+{
+    struct mtl_sw_priv *p = PL_PRIV(sw);
+    struct mtl_ctx *ctx = p->ctx;
+    if (p->crop_w == w && p->crop_h == h && p->crop_textures[0])
+        return true;
+
+    mtl_sw_release_crop_pool(sw);
+
+    const uint32_t pixfmt = 0x42475241; // 'BGRA', kCVPixelFormatType_32BGRA
+    const size_t bpr = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, (size_t) w * 4);
+
+    for (int i = 0; i < (int) PL_ARRAY_SIZE(p->crop_textures); i++) {
+        NSDictionary *props = @{
+            (__bridge NSString *) kIOSurfaceWidth: @(w),
+            (__bridge NSString *) kIOSurfaceHeight: @(h),
+            (__bridge NSString *) kIOSurfaceBytesPerElement: @4,
+            (__bridge NSString *) kIOSurfaceBytesPerRow: @(bpr),
+            (__bridge NSString *) kIOSurfacePixelFormat: @(pixfmt),
+        };
+        IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef) props);
+        if (!surface)
+            goto fail;
+
+        MTLTextureDescriptor *desc = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                         width:w height:h mipmapped:NO];
+        desc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        desc.storageMode = MTLStorageModeShared;
+        id<MTLTexture> tex = [ctx->dev newTextureWithDescriptor:desc iosurface:surface plane:0];
+        if (!tex) {
+            CFRelease(surface);
+            goto fail;
+        }
+
+        pl_tex wrapped = pl_mtl_wrap(sw->gpu, pl_mtl_wrap_params(.tex = tex));
+        [tex release]; // pl_mtl_wrap holds its own reference
+        if (!wrapped) {
+            CFRelease(surface);
+            goto fail;
+        }
+
+        p->crop_surfaces[i] = surface;
+        p->crop_textures[i] = wrapped;
+    }
+
+    p->crop_w = w;
+    p->crop_h = h;
+    p->crop_idx = 0;
+    pl_info(sw->log, "metal: created %dx%d cropped mirror pool", w, h);
+    return true;
+
+fail:
+    pl_err(sw->log, "metal: failed creating the %dx%d cropped mirror pool", w, h);
+    mtl_sw_release_crop_pool(sw);
+    return false;
+}
+
 // Fallback target when the layer cannot vend drawables: renders into the offscreen mirror pool so
 // the frame callback keeps firing (SDR BGRA8; the mirror consumer is a PiP-sized sample layer).
 static bool mtl_sw_start_offscreen_frame(pl_swapchain sw,
@@ -336,7 +421,9 @@ static bool mtl_sw_start_offscreen_frame(pl_swapchain sw,
         .w          = w,
         .h          = h,
         .format     = fmt,
+        .sampleable = true,
         .renderable = true,
+        .blit_src   = true,
         .blit_dst   = true,
         .debug_tag  = PL_DEBUG_TAG,
     };
@@ -394,7 +481,9 @@ static bool mtl_sw_start_frame(pl_swapchain sw,
             .w          = texp->tex.width,
             .h          = texp->tex.height,
             .format     = p->fbo_fmt,
+            .sampleable = true,
             .renderable = true,
+            .blit_src   = true,
             .blit_dst   = true,
             .debug_tag  = PL_DEBUG_TAG,
         };
@@ -430,22 +519,61 @@ static bool mtl_sw_submit_frame(pl_swapchain sw)
         if (p->drawable)
             [cmdbuf presentDrawable:p->drawable];
 
-        // Mirror the frame's IOSurface to the host callback (PiP / AirPlay): the offscreen pool
-        // surface, or the drawable's own backing surface (IOSurface-backed because framebufferOnly
-        // == NO). Fire once the GPU has finished so the surface holds the rendered frame, retaining
-        // it across the async hand-off.
+        // Mirror the frame's IOSurface to the host callback (PiP / AirPlay). With a crop set, the
+        // crop region is first blitted into the BGRA8 cropped pool (converting from HDR formats via
+        // the raster path) so the consumer receives the video rect, not the letterboxed surface;
+        // otherwise the offscreen pool surface or the drawable's own backing surface is handed over
+        // directly. Fire once the GPU has finished so the surface holds the rendered frame,
+        // retaining it across the async hand-off.
         if (p->frame_cb) {
-            IOSurfaceRef surface = p->frame_surface;
-            if (!surface && p->drawable)
-                surface = p->drawable.texture.iosurface;
+            IOSurfaceRef surface = NULL;
+            int w = p->fbo->params.w;
+            int h = p->fbo->params.h;
+
+            struct pl_rect2d crop = p->mirror_crop;
+            crop.x0 = PL_CLAMP(crop.x0, 0, p->fbo->params.w);
+            crop.x1 = PL_CLAMP(crop.x1, 0, p->fbo->params.w);
+            crop.y0 = PL_CLAMP(crop.y0, 0, p->fbo->params.h);
+            crop.y1 = PL_CLAMP(crop.y1, 0, p->fbo->params.h);
+            const int cw = pl_rect_w(crop), ch = pl_rect_h(crop);
+            const bool cropped = cw > 0 && ch > 0 &&
+                !(cw == p->fbo->params.w && ch == p->fbo->params.h);
+
+            if (cropped && mtl_sw_ensure_crop_pool(sw, cw, ch)) {
+                const int idx = p->crop_idx;
+                p->crop_idx = (p->crop_idx + 1) % (int) PL_ARRAY_SIZE(p->crop_textures);
+                const struct pl_tex_blit_params blit = {
+                    .src    = p->fbo,
+                    .dst    = p->crop_textures[idx],
+                    .src_rc = { crop.x0, crop.y0, 0, crop.x1, crop.y1, 1 },
+                    .dst_rc = { 0, 0, 0, cw, ch, 1 },
+                };
+                if (p->fbo->params.format == p->crop_textures[idx]->params.format) {
+                    pl_tex_blit(sw->gpu, &blit);
+                } else {
+                    // Format conversion (e.g. HDR RGB10A2 -> BGRA8): the plain blit would
+                    // reinterpret bits, so force the sampling raster path.
+                    pl_tex_blit_raster(sw->gpu, &blit);
+                }
+                surface = p->crop_surfaces[idx];
+                w = cw;
+                h = ch;
+            } else {
+                surface = p->frame_surface;
+                if (!surface && p->drawable)
+                    surface = p->drawable.texture.iosurface;
+            }
+
             if (surface) {
+                // Submit the blit before the handler's command buffer so the queue's FIFO order
+                // guarantees the crop is complete when the callback fires.
+                pl_gpu_flush(sw->gpu);
                 CFRetain(surface);
-                const int w = p->fbo->params.w;
-                const int h = p->fbo->params.h;
                 const pl_mtl_frame_cb cb = p->frame_cb;
                 void *const cb_priv = p->frame_cb_priv;
+                const int cb_w = w, cb_h = h;
                 [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> buf) {
-                    cb(cb_priv, (void *) surface, w, h);
+                    cb(cb_priv, (void *) surface, cb_w, cb_h);
                     CFRelease(surface);
                 }];
             }
@@ -480,3 +608,18 @@ static const struct pl_sw_fns mtl_sw_fns = {
     .submit_frame     = mtl_sw_submit_frame,
     .swap_buffers     = mtl_sw_swap_buffers,
 };
+
+void pl_mtl_swapchain_set_frame_mirror_crop(pl_swapchain sw, int x, int y, int w, int h)
+{
+    struct mtl_sw_priv *p = PL_PRIV(sw);
+    if (p->impl.start_frame != mtl_sw_start_frame)
+        return; // not a Metal swapchain
+
+    pl_mutex_lock(&p->lock);
+    if (w > 0 && h > 0) {
+        p->mirror_crop = (struct pl_rect2d) { x, y, x + w, y + h };
+    } else {
+        p->mirror_crop = (struct pl_rect2d) {0};
+    }
+    pl_mutex_unlock(&p->lock);
+}

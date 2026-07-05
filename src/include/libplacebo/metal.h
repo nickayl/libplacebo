@@ -104,6 +104,12 @@ struct pl_mtl_swapchain_params {
 PL_API pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
     const struct pl_mtl_swapchain_params *params);
 
+// Sets (or clears, with w or h == 0) the crop applied to mirrored frames, in surface pixels.
+// When set, the frame callback receives a BGRA8 copy of the crop region (GPU blit, converting
+// from HDR formats as needed) instead of the full surface — e.g. the video rect inside a
+// letterboxed surface. Thread-safe; no-op on non-Metal swapchains. Full frame by default.
+PL_API void pl_mtl_swapchain_set_frame_mirror_crop(pl_swapchain sw, int x, int y, int w, int h);
+
 struct pl_mtl_wrap_params {
     // The MTLTexture to wrap. Must have been created by the same device used
     // by `gpu`, with a pixel format corresponding to one of the GPU's `pl_fmt`
