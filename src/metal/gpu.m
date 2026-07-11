@@ -19,6 +19,7 @@
 
 static const struct pl_gpu_fns pl_fns_mtl;
 static void mtl_gpu_destroy(pl_gpu gpu);
+static void mtl_recent_sweep(struct mtl_ctx *ctx);
 
 pl_gpu mtl_gpu_create(struct mtl_ctx *ctx)
 {
@@ -137,8 +138,10 @@ static void mtl_gpu_destroy(pl_gpu gpu)
 
     // Command buffers on one queue complete in FIFO order, so draining the
     // most recent commit drains everything
-    if (p->ctx)
+    if (p->ctx) {
         mtl_pending_wait(p->ctx, &p->ctx->last_committed);
+        mtl_recent_sweep(p->ctx);
+    }
 
     for (int s = 0; s < PL_TEX_SAMPLE_MODE_COUNT; s++) {
         for (int a = 0; a < PL_TEX_ADDRESS_MODE_COUNT; a++)
@@ -171,6 +174,19 @@ void mtl_cmdbuf_check(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
     }
 }
 
+// Checks completed submissions in the sweep ring for execution errors
+static void mtl_recent_sweep(struct mtl_ctx *ctx)
+{
+    for (int i = 0; i < (int) PL_ARRAY_SIZE(ctx->recent); i++) {
+        id<MTLCommandBuffer> buf = ctx->recent[i];
+        if (buf && buf.status >= MTLCommandBufferStatusCompleted) {
+            mtl_cmdbuf_check(ctx, buf);
+            [buf release];
+            ctx->recent[i] = nil;
+        }
+    }
+}
+
 struct mtl_pending mtl_commit(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
 {
     struct mtl_pending use = { .cmdbuf = [cmdbuf retain] };
@@ -182,6 +198,14 @@ struct mtl_pending mtl_commit(struct mtl_ctx *ctx, id<MTLCommandBuffer> cmdbuf)
 
     [cmdbuf commit];
     mtl_mark_pending(&ctx->last_committed, &use);
+
+    mtl_recent_sweep(ctx);
+    id<MTLCommandBuffer> *slot = &ctx->recent[ctx->recent_idx];
+    // Only ever non-nil with a full ring of submissions still in flight
+    [*slot release];
+    *slot = [cmdbuf retain];
+    ctx->recent_idx = (ctx->recent_idx + 1) % (int) PL_ARRAY_SIZE(ctx->recent);
+
     return use;
 }
 

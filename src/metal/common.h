@@ -56,6 +56,11 @@ struct mtl_ctx {
     uint64_t event_value;
 
     struct mtl_pending last_committed; // most recent commit on `queue`
+
+    // Recent submissions, swept for execution errors on every commit
+    // (command buffers that are never waited on would fail silently)
+    id<MTLCommandBuffer> recent[16];
+    int recent_idx;
 };
 
 struct pl_gpu_mtl {
