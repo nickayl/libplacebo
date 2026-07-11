@@ -84,6 +84,8 @@ PL_API pl_mtl pl_mtl_get(pl_gpu gpu);
 // the call). The surface's pixel format follows the swapchain's (kCVPixelFormatType_32BGRA
 // for SDR, kCVPixelFormatType_ARGB2101010LEPacked for HDR). Fired on a GPU-completion
 // thread; the host must hop to its own queue. `priv` is `frame_callback_priv`.
+// `pl_swapchain_destroy` blocks until in-flight invocations return and guarantees the
+// callback is never invoked afterwards.
 typedef void (*pl_mtl_frame_cb)(void *priv, void *iosurface, int width, int height,
                                 const struct pl_color_space *color_space);
 

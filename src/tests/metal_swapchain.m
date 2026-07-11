@@ -139,6 +139,24 @@ int main()
         // Destroy with the mirror installed must drain cleanly
         pl_swapchain_destroy(&sw);
         REQUIRE_CMP(atomic_load(&st.frames), ==, num_frames + 5, "d");
+
+        // Destroy without awaiting the callbacks: every submitted frame's
+        // invocation must have returned by the time destroy returns
+        atomic_store(&st.frames, 0);
+        st.expect_fourcc = 0x42475241; // 'BGRA'
+        st.expect_trc = PL_COLOR_TRC_UNKNOWN;
+        pl_swapchain rush = pl_mtl_create_swapchain(mtl, pl_mtl_swapchain_params(
+            .layer = layer,
+            .frame_callback = frame_cb,
+            .frame_callback_priv = &st,
+        ));
+        REQUIRE(rush);
+        w = width; h = height;
+        REQUIRE(pl_swapchain_resize(rush, &w, &h));
+        render_frames(mtl->gpu, rush, 3);
+        pl_swapchain_destroy(&rush);
+        REQUIRE_CMP(atomic_load(&st.frames), ==, 3, "d");
+        REQUIRE_CMP(atomic_load(&st.bad), ==, 0, "d");
     }
 
     pl_mtl_destroy(&mtl);

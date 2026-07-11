@@ -54,6 +54,10 @@ struct mtl_sw_priv {
     pl_mtl_frame_cb frame_cb;
     void *frame_cb_priv;
 
+    // in-flight mirror callback invocations, drained on destroy
+    pl_cond mirror_drained;
+    int mirror_inflight;
+
     // full-frame mirror pool: blit target for mirrored drawable frames, and
     // render target when the layer cannot vend drawables (e.g. the app is
     // backgrounded with Picture in Picture active)
@@ -191,6 +195,7 @@ pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
     p->frame_cb = params->frame_callback;
     p->frame_cb_priv = params->frame_callback_priv;
     pl_mutex_init(&p->lock);
+    pl_cond_init(&p->mirror_drained);
 
     layer.device = ctx->dev;
     // Drawables must also work as blit destinations, not just render targets
@@ -202,6 +207,7 @@ pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
 
     mtl_sw_configure(sw, NULL);
     if (!p->fbo_fmt) {
+        pl_cond_destroy(&p->mirror_drained);
         pl_mutex_destroy(&p->lock);
         [p->layer release];
         pl_free(sw);
@@ -228,6 +234,13 @@ static void mtl_sw_destroy(pl_swapchain sw)
     [p->last_present waitUntilCompleted];
     [p->last_present release];
 
+    // Completion handlers can outlive waitUntilCompleted: block until no
+    // mirror callback invocation is still in flight
+    pl_mutex_lock(&p->lock);
+    while (p->mirror_inflight)
+        pl_cond_wait(&p->mirror_drained, &p->lock);
+    pl_mutex_unlock(&p->lock);
+
     if (p->fbo && !p->fbo_borrowed)
         pl_tex_destroy(sw->gpu, &p->fbo);
     [p->drawable release];
@@ -235,6 +248,7 @@ static void mtl_sw_destroy(pl_swapchain sw)
     mtl_sw_pool_release(sw, &p->crop_pool);
 
     [p->layer release];
+    pl_cond_destroy(&p->mirror_drained);
     pl_mutex_destroy(&p->lock);
     pl_free((void *) sw);
 }
@@ -537,9 +551,14 @@ static bool mtl_sw_submit_frame(pl_swapchain sw)
                 void *const cb_priv = p->frame_cb_priv;
                 const int cb_w = w, cb_h = h;
                 const struct pl_color_space cb_csp = p->csp;
+                p->mirror_inflight++;
                 [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> buf) {
                     cb(cb_priv, (void *) surface, cb_w, cb_h, &cb_csp);
                     CFRelease(surface);
+                    pl_mutex_lock(&p->lock);
+                    p->mirror_inflight--;
+                    pl_cond_signal(&p->mirror_drained);
+                    pl_mutex_unlock(&p->lock);
                 }];
             }
         }
