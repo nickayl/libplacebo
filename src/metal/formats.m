@@ -258,6 +258,35 @@ void mtl_setup_formats(struct pl_gpu_t *gpu, id<MTLDevice> dev)
         PL_ARRAY_APPEND(gpu, formats, fmt);
     }
 
+    // bgr10a2: like rgb10a2, but with swapped sampling order (the layout
+    // shared 10-bit IOSurfaces use, kCVPixelFormatType_ARGB2101010LEPacked)
+    {
+        struct pl_fmt_t *fmt = pl_alloc_obj(gpu, fmt, struct pl_fmt_mtl);
+        struct pl_fmt_mtl *fmtp = PL_PRIV(fmt);
+        fmtp->mtl_fmt = MTLPixelFormatBGR10A2Unorm;
+        fmtp->mtl_vfmt = MTLVertexFormatInvalid;
+
+        *fmt = (struct pl_fmt_t) {
+            .name            = "bgr10a2",
+            .type            = PL_FMT_UNORM,
+            .num_components  = 4,
+            .opaque          = false,
+            .gatherable      = true,
+            .internal_size   = 4,
+            .texel_size      = 4,
+            .texel_align     = 4,
+            .caps            = PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_LINEAR |
+                               PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_BLENDABLE |
+                               PL_FMT_CAP_BLITTABLE | PL_FMT_CAP_HOST_READABLE,
+            .component_depth = {10, 10, 10, 2},
+            .host_bits       = {10, 10, 10, 2},
+            .sample_order    = {2, 1, 0, 3},
+        };
+
+        fmt->fourcc = pl_fmt_fourcc(fmt);
+        PL_ARRAY_APPEND(gpu, formats, fmt);
+    }
+
     gpu->formats = formats.elem;
     gpu->num_formats = formats.num;
 }

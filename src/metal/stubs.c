@@ -45,6 +45,12 @@ pl_swapchain pl_mtl_create_swapchain(pl_mtl mtl,
     pl_unreachable();
 }
 
+void pl_mtl_swapchain_set_frame_mirror_crop(pl_swapchain sw, int x, int y,
+                                            int w, int h)
+{
+    // no-op on non-Metal swapchains
+}
+
 pl_tex pl_mtl_wrap(pl_gpu gpu, const struct pl_mtl_wrap_params *params)
 {
     pl_unreachable();

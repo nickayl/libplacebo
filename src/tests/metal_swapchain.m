@@ -12,15 +12,20 @@ struct mirror_state {
     _Atomic int frames;
     _Atomic int bad;
     int expect_w, expect_h;
+    uint32_t expect_fourcc;
+    enum pl_color_transfer expect_trc;
 };
 
-static void frame_cb(void *priv, void *iosurface, int width, int height)
+static void frame_cb(void *priv, void *iosurface, int width, int height,
+                     const struct pl_color_space *csp)
 {
     struct mirror_state *st = priv;
     IOSurfaceRef surface = (IOSurfaceRef) iosurface;
-    if (!surface || width != st->expect_w || height != st->expect_h ||
+    if (!surface || !csp || width != st->expect_w || height != st->expect_h ||
         (int) IOSurfaceGetWidth(surface) != width ||
-        (int) IOSurfaceGetHeight(surface) != height)
+        (int) IOSurfaceGetHeight(surface) != height ||
+        IOSurfaceGetPixelFormat(surface) != st->expect_fourcc ||
+        csp->transfer != st->expect_trc)
     {
         atomic_fetch_add(&st->bad, 1);
     }
@@ -65,7 +70,12 @@ int main()
         CAMetalLayer *layer = [CAMetalLayer layer];
         layer.drawableSize = CGSizeMake(width, height);
 
-        struct mirror_state st = { .expect_w = width, .expect_h = height };
+        struct mirror_state st = {
+            .expect_w = width,
+            .expect_h = height,
+            .expect_fourcc = 0x42475241, // 'BGRA'
+            .expect_trc = PL_COLOR_TRC_UNKNOWN,
+        };
 
         // Without a mirror the swapchain must behave exactly as before
         pl_swapchain plain = pl_mtl_create_swapchain(mtl, pl_mtl_swapchain_params(
@@ -113,9 +123,22 @@ int main()
         REQUIRE_CMP(await_frames(&st, num_frames + 3), ==, num_frames + 3, "d");
         REQUIRE_CMP(atomic_load(&st.bad), ==, 0, "d");
 
+        // An HDR colorspace hint must move the mirror to the 10-bit swapchain
+        // format and report the hinted color space
+        pl_swapchain_colorspace_hint(sw, &(struct pl_color_space) {
+            .primaries = PL_COLOR_PRIM_BT_2020,
+            .transfer  = PL_COLOR_TRC_PQ,
+            .hdr = { .max_luma = 1000 },
+        });
+        st.expect_fourcc = 0x6C313072; // 'l10r'
+        st.expect_trc = PL_COLOR_TRC_PQ;
+        render_frames(mtl->gpu, sw, 2);
+        REQUIRE_CMP(await_frames(&st, num_frames + 5), ==, num_frames + 5, "d");
+        REQUIRE_CMP(atomic_load(&st.bad), ==, 0, "d");
+
         // Destroy with the mirror installed must drain cleanly
         pl_swapchain_destroy(&sw);
-        REQUIRE_CMP(atomic_load(&st.frames), ==, num_frames + 3, "d");
+        REQUIRE_CMP(atomic_load(&st.frames), ==, num_frames + 5, "d");
     }
 
     pl_mtl_destroy(&mtl);
