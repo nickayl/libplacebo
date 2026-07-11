@@ -70,6 +70,17 @@ pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
             return NULL;
         }
 
+        const MTLTextureType expected = params->d ? MTLTextureType3D :
+                                        params->h ? MTLTextureType2D :
+                                                    MTLTextureType1D;
+        if (mtex.textureType != expected || mtex.arrayLength > 1 ||
+            mtex.mipmapLevelCount > 1 || mtex.sampleCount > 1)
+        {
+            PL_ERR(gpu, "Imported textures must be plain (non-array, "
+                   "non-mipmapped, non-multisampled) 1D/2D/3D textures!");
+            return NULL;
+        }
+
         struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_mtl);
         struct pl_tex_mtl *texp = PL_PRIV(tex);
         texp->tex = [mtex retain];
@@ -193,8 +204,17 @@ pl_tex pl_mtl_wrap(pl_gpu gpu, const struct pl_mtl_wrap_params *params)
         return NULL;
     }
 
-    if (mtex.mipmapLevelCount > 1 || mtex.sampleCount > 1) {
-        PL_ERR(gpu, "Mipmapped or multisampled textures cannot be wrapped!");
+    if (mtex.textureType != MTLTextureType1D &&
+        mtex.textureType != MTLTextureType2D &&
+        mtex.textureType != MTLTextureType3D)
+    {
+        PL_ERR(gpu, "Only plain 1D/2D/3D textures can be wrapped!");
+        return NULL;
+    }
+
+    if (mtex.mipmapLevelCount > 1 || mtex.sampleCount > 1 || mtex.arrayLength > 1) {
+        PL_ERR(gpu, "Mipmapped, multisampled or array textures cannot be "
+               "wrapped!");
         return NULL;
     }
 
@@ -281,9 +301,12 @@ void mtl_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params)
     const int sw = pl_rect_w(src_rc), sh = pl_rect_h(src_rc), sd = pl_rect_d(src_rc);
     const int dw = pl_rect_w(dst_rc), dh = pl_rect_h(dst_rc), dd = pl_rect_d(dst_rc);
 
-    // Same size, no flips: a plain blit-encoder copy. Everything else
-    // (scaling, mirroring) goes through the shared raster-pass helper.
-    if (sw == dw && sh == dh && sd == dd && sw > 0 && sh >= 0 && sd >= 0) {
+    // Same size, same pixel format, no flips: a plain blit-encoder copy.
+    // Everything else (scaling, mirroring, format casts) goes through the
+    // shared raster-pass helper.
+    if (srcp->tex.pixelFormat == dstp->tex.pixelFormat &&
+        sw == dw && sh == dh && sd == dd && sw > 0 && sh >= 0 && sd >= 0)
+    {
         struct mtl_pending use = mtl_blit_submit(ctx, ^(id<MTLBlitCommandEncoder> enc) {
             [enc copyFromTexture:srcp->tex
                      sourceSlice:0
