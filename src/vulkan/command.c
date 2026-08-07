@@ -276,9 +276,9 @@ struct vk_sync_scope vk_sem_barrier(struct vk_cmd *cmd, struct vk_sem *sem,
         // Special case: this is a pure layout transition (with no command),
         // in this case we need to ensure that we still emit some sort of
         // synchronization scope or else the layers complain
-        if (stage == VK_PIPELINE_STAGE_2_NONE) {
+        if (stage == VK_PIPELINE_STAGE_2_NONE && is_write) {
             last.stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-            last.access = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+            last.access = VK_ACCESS_2_MEMORY_WRITE_BIT;
         }
     }
 
@@ -324,12 +324,14 @@ struct vk_sync_scope vk_sem_barrier(struct vk_cmd *cmd, struct vk_sem *sem,
 }
 
 struct vk_cmdpool *vk_cmdpool_create(struct vk_ctx *vk, int qf, int qnum,
-                                     VkQueueFamilyProperties props)
+                                     VkQueueFamilyProperties props,
+                                     VkDeviceQueueCreateFlags flags)
 {
     struct vk_cmdpool *pool = pl_alloc_ptr(NULL, pool);
     *pool = (struct vk_cmdpool) {
         .vk         = vk,
         .props      = props,
+        .flags      = flags,
         .qf         = qf,
         .queues     = pl_calloc(pool, qnum, sizeof(VkQueue)),
         .sync       = pl_calloc(pool, qnum, sizeof(pl_vulkan_sem)),
@@ -348,7 +350,13 @@ struct vk_cmdpool *vk_cmdpool_create(struct vk_ctx *vk, int qf, int qnum,
     };
 
     for (int n = 0; n < qnum; n++) {
-        vk->GetDeviceQueue(vk->dev, qf, n, &pool->queues[n]);
+        VkDeviceQueueInfo2 qinfo = {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+            .flags = flags,
+            .queueFamilyIndex = qf,
+            .queueIndex       = n,
+        };
+        vk->GetDeviceQueue2(vk->dev, &qinfo, &pool->queues[n]);
         VK(vk->CreateSemaphore(vk->dev, &sinfo, PL_VK_ALLOC, &pool->sync[n].sem));
         PL_VK_NAME(SEMAPHORE, pool->sync[n].sem, "cmd");
     }
@@ -450,7 +458,7 @@ static VkResult vk_queue_submit2(struct vk_ctx *vk, VkQueue queue,
 
     for (int i = 0; i < num_deps; i++) {
         deps[i] = info2->pWaitSemaphoreInfos[i].semaphore;
-        masks[i] = info2->pWaitSemaphoreInfos[i].stageMask;
+        masks[i] = lower_stage2(info2->pWaitSemaphoreInfos[i].stageMask);
         depvals[i] = info2->pWaitSemaphoreInfos[i].value;
     }
     for (int i = 0; i < num_sigs; i++) {

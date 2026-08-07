@@ -315,21 +315,6 @@ pl_tex vk_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
     if (host_writable || tex->params.blit_dst)
         usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-    // Opportunistically try and use host image copies if possible
-    const VkDeviceSize size_estimate = fmt->internal_size * PL_ALIGN2(params->w, 8) *
-                                       PL_MAX(params->h, 1) * PL_MAX(params->d, 1);
-    if (((tex->params.host_readable && p->host_dl_layouts.num) ||
-         (host_writable && p->host_ul_layouts.num)) && fmtp->can_host_copy &&
-        (p->rebar_enabled || size_estimate < gpu->limits.max_mapped_vram / 1024))
-        usage |= VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
-
-    if (!usage) {
-        // Vulkan requires images have at least *some* image usage set, but our
-        // API is perfectly happy with a (useless) image. So just put
-        // VK_IMAGE_USAGE_TRANSFER_DST_BIT since this harmless.
-        usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    }
-
     if (tex_vk->num_planes) {
         flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
                  VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
@@ -430,6 +415,41 @@ pl_tex vk_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
         pl_assert(drm_list.drmFormatModifierCount > 0);
         vk_link_struct(&iinfo, &drm_list);
         iinfo.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+    }
+
+    // Opportunistically try and use host image copies if possible. On
+    // implementations where identicalMemoryTypeRequirements is false, adding
+    // HOST_TRANSFER_BIT can eliminate every memory type for an image. Probe
+    // if the image would be usable with HOST_TRANSFER_BIT.
+    const VkDeviceSize size_estimate = fmt->internal_size * PL_ALIGN2(params->w, 8) *
+                                       PL_MAX(params->h, 1) * PL_MAX(params->d, 1);
+    if (((tex->params.host_readable && p->host_dl_layouts.num) ||
+         (host_writable && p->host_ul_layouts.num)) && fmtp->can_host_copy &&
+        (p->rebar_enabled || size_estimate < gpu->limits.max_mapped_vram / 1024))
+    {
+        bool ok = p->host_copy_identical;
+        if (!ok && vk->GetDeviceImageMemoryRequirements) {
+            VkImageCreateInfo probe_iinfo = iinfo;
+            probe_iinfo.usage = iinfo.usage | VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+            VkDeviceImageMemoryRequirements probe_info = {
+                .sType = VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS,
+                .pCreateInfo = &probe_iinfo,
+            };
+            VkMemoryRequirements2 probe_reqs = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+            };
+            vk->GetDeviceImageMemoryRequirements(vk->dev, &probe_info, &probe_reqs);
+            ok = probe_reqs.memoryRequirements.memoryTypeBits != 0;
+        }
+        if (ok)
+            iinfo.usage |= VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT;
+    }
+
+    if (!iinfo.usage) {
+        // Vulkan requires images have at least *some* image usage set, but our
+        // API is perfectly happy with a (useless) image. So just put
+        // VK_IMAGE_USAGE_TRANSFER_DST_BIT since this harmless.
+        iinfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
 
     // Double-check physical image format limits and fail if invalid
@@ -877,10 +897,11 @@ static bool try_host_xfer(pl_gpu gpu, pl_tex tex, bool upload)
     struct pl_vk *p = PL_PRIV(gpu);
     struct vk_ctx *vk = p->vk;
     struct pl_tex_vk *tex_vk = PL_PRIV(tex);
+    const PL_ARRAY(VkImageLayout) *src_layouts = (void *) &p->host_dl_layouts;
     const PL_ARRAY(VkImageLayout) *layouts = upload ? (void *) &p->host_ul_layouts
-                                                    : (void *) &p->host_dl_layouts;
+                                                    : (void *) src_layouts;
 
-    if (!(tex_vk->usage_flags & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) |
+    if (!(tex_vk->usage_flags & VK_IMAGE_USAGE_HOST_TRANSFER_BIT_EXT) ||
         !layouts->num || tex->params.format->emulated)
         return false;
 
@@ -893,6 +914,19 @@ static bool try_host_xfer(pl_gpu gpu, pl_tex tex, bool upload)
         if (tex_vk->layout == layouts->elem[i])
             return true;
     }
+
+    // Check if old layout transition is supported. The implementation must
+    // include the VK_IMAGE_LAYOUT_GENERAL layout in supported dst layouts, so
+    // no need to check.
+    bool old_supported = false;
+    for (int i = 0; i < src_layouts->num; i++) {
+        if (tex_vk->layout == src_layouts->elem[i]) {
+            old_supported = true;
+            break;
+        }
+    }
+    if (!old_supported)
+        return false;
 
     // Need to perform a layout transition
     VK(vk->TransitionImageLayoutEXT(vk->dev, 1, &(VkHostImageLayoutTransitionInfoEXT) {
@@ -936,7 +970,7 @@ static bool vk_tex_upload_host(pl_gpu gpu, const struct pl_tex_transfer_params *
             .memoryRowLength = params->row_pitch / fmt->texel_size,
             .memoryImageHeight = params->depth_pitch / params->row_pitch,
             .imageOffset = { rc.x0, rc.y0, rc.z0 },
-            .imageExtent = { rc.x1, rc.y1, rc.z1 },
+            .imageExtent = { pl_rect_w(rc), pl_rect_h(rc), pl_rect_d(rc) },
             .imageSubresource = {
                 .aspectMask = tex_vk->aspect,
                 .layerCount = 1,
@@ -1054,7 +1088,7 @@ bool vk_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
             .bufferRowLength = params->row_pitch / fmt->texel_size,
             .bufferImageHeight = params->depth_pitch / params->row_pitch,
             .imageOffset = { rc.x0, rc.y0, rc.z0 },
-            .imageExtent = { rc.x1, rc.y1, rc.z1 },
+            .imageExtent = { pl_rect_w(rc), pl_rect_h(rc), pl_rect_d(rc) },
             .imageSubresource = {
                 .aspectMask = tex_vk->aspect,
                 .layerCount = 1,
@@ -1186,7 +1220,7 @@ bool vk_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
             .bufferRowLength = params->row_pitch / fmt->texel_size,
             .bufferImageHeight = params->depth_pitch / params->row_pitch,
             .imageOffset = { rc.x0, rc.y0, rc.z0 },
-            .imageExtent = { rc.x1, rc.y1, rc.z1 },
+            .imageExtent = { pl_rect_w(rc), pl_rect_h(rc), pl_rect_d(rc) },
             .imageSubresource = {
                 .aspectMask = tex_vk->aspect,
                 .layerCount = 1,
@@ -1295,7 +1329,7 @@ pl_tex pl_vulkan_wrap(pl_gpu gpu, const struct pl_vulkan_wrap_params *params)
 #define MASK(field, cap)                                                        \
     do {                                                                        \
         if (tex->params.field && !(fmt->caps & cap)) {                          \
-            PL_WARN(gpu, "Masking `" #field "` from wrapped texture because "   \
+            PL_DEBUG(gpu, "Masking `" #field "` from wrapped texture because "   \
                     "the corresponding format '%s' does not support " #cap,     \
                     fmt->name);                                                 \
             tex->params.field = false;                                          \

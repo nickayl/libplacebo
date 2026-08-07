@@ -587,8 +587,19 @@ static inline bool av1_grain_data_eq(const struct pl_film_grain_data *da,
 static void fill_grain_lut(void *data, const struct sh_lut_params *params)
 {
     struct grain_obj_av1 *obj = params->priv;
-    size_t entries = params->width * params->height * params->comps;
-    memcpy(data, obj->grain, entries * sizeof(float));
+    const int comps = params->comps;
+    size_t entries = params->width * params->height;
+    float *out = data;
+
+    if (params->comps == 1) { /* common case */
+        memcpy(out, obj->grain, entries * sizeof(float));
+    } else {
+        for (int c = 0; c < comps; c++) {
+            const float *grain = &obj->grain[c][0][0];
+            for (size_t i = 0; i < entries; i++)
+                out[i * comps + c] = grain[i];
+        }
+    }
 }
 
 bool pl_shader_fg_av1(pl_shader sh, pl_shader_obj *grain_state,
@@ -827,10 +838,13 @@ bool pl_shader_fg_av1(pl_shader sh, pl_shader_obj *grain_state,
              "uvec2 local_id  = gl_LocalInvocationID.xy;  \n"
              "uvec2 global_id = gl_GlobalInvocationID.xy; \n");
     } else {
-        GLSL("uvec2 global_id = uvec2(gl_FragCoord);                  \n"
+        ident_t coords = sh_attr_vec2(sh, "grain_pixel_coord", &(pl_rect2df) {
+            .x0 = 0, .y0 = 0, .x1 = tex_w, .y1 = tex_h,
+        });
+        GLSL("uvec2 global_id = uvec2("$");                            \n"
              "uvec2 block_id  = global_id / uvec2(%d, %d);            \n"
              "uvec2 local_id  = global_id - uvec2(%d, %d) * block_id; \n",
-             bw, bh, bw, bh);
+             coords, bw, bh, bw, bh);
     }
 
     // Load the data vector which holds the offsets

@@ -82,6 +82,7 @@ static const struct vk_fun vk_inst_funs[] = {
     // behind various VkSurfaceKHR values already being provided by the API
     // user (implying this extension is loaded).
     PL_VK_INST_FUN(GetPhysicalDeviceSurfaceCapabilitiesKHR),
+    PL_VK_INST_FUN(GetPhysicalDeviceSurfaceCapabilities2KHR),
     PL_VK_INST_FUN(GetPhysicalDeviceSurfaceFormatsKHR),
     PL_VK_INST_FUN(GetPhysicalDeviceSurfacePresentModesKHR),
     PL_VK_INST_FUN(GetPhysicalDeviceSurfaceSupportKHR),
@@ -204,6 +205,16 @@ static const struct vk_ext vk_device_extensions[] = {
         .name = VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
     }, {
         .name = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
+#ifdef VK_KHR_internally_synchronized_queues
+    }, {
+        .name = VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME,
+#endif
+    }, {
+        .name = VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
+        .funs = (const struct vk_fun[]) {
+            PL_VK_DEV_FUN(GetDeviceImageMemoryRequirements),
+            {0}
+        },
     },
 };
 
@@ -235,6 +246,10 @@ const char * const pl_vulkan_recommended_extensions[] = {
     VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME,
     VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
     VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
+#ifdef VK_KHR_internally_synchronized_queues
+    VK_KHR_INTERNALLY_SYNCHRONIZED_QUEUES_EXTENSION_NAME,
+#endif
+    VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
 };
 
 const int pl_vulkan_num_recommended_extensions =
@@ -247,8 +262,18 @@ static_assert(PL_ARRAY_SIZE(pl_vulkan_recommended_extensions) + 1 ==
               "vk_device_extensions?");
 
 // Recommended features; keep in sync with libavutil vulkan hwcontext
+#ifdef VK_KHR_internally_synchronized_queues
+static const VkPhysicalDeviceInternallySynchronizedQueuesFeaturesKHR synchronized_queues = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INTERNALLY_SYNCHRONIZED_QUEUES_FEATURES_KHR,
+    .internallySynchronizedQueues = true,
+};
+#endif
+
 static const VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchain_maintenance1 = {
     .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR,
+#ifdef VK_KHR_internally_synchronized_queues
+    .pNext = (void *) &synchronized_queues,
+#endif
     .swapchainMaintenance1 = true,
 };
 
@@ -418,7 +443,8 @@ static const struct vk_fun vk_dev_funs[] = {
     PL_VK_DEV_FUN(FreeCommandBuffers),
     PL_VK_DEV_FUN(FreeMemory),
     PL_VK_DEV_FUN(GetBufferMemoryRequirements),
-    PL_VK_DEV_FUN(GetDeviceQueue),
+    PL_VK_DEV_FUN(GetDeviceImageMemoryRequirements),
+    PL_VK_DEV_FUN(GetDeviceQueue2),
     PL_VK_DEV_FUN(GetImageMemoryRequirements2),
     PL_VK_DEV_FUN(GetImageSubresourceLayout),
     PL_VK_DEV_FUN(GetPipelineCacheData),
@@ -1085,6 +1111,8 @@ error:
     return dev;
 }
 
+static void queue_lock_noop(void *priv, uint32_t qf, uint32_t qidx) {}
+
 static void lock_queue_internal(void *priv, uint32_t qf, uint32_t qidx)
 {
     struct vk_ctx *vk = priv;
@@ -1097,9 +1125,25 @@ static void unlock_queue_internal(void *priv, uint32_t qf, uint32_t qidx)
     pl_mutex_unlock(&vk->queue_locks.elem[qf].elem[qidx]);
 }
 
+static bool has_synchronized_queues(const VkPhysicalDeviceFeatures2 *features)
+{
+#ifdef VK_KHR_internally_synchronized_queues
+    const VkPhysicalDeviceInternallySynchronizedQueuesFeaturesKHR *isq = vk_find_struct(features,
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INTERNALLY_SYNCHRONIZED_QUEUES_FEATURES_KHR);
+    return isq && isq->internallySynchronizedQueues;
+#else
+    return false;
+#endif
+}
+
 static void init_queue_locks(struct vk_ctx *vk, uint32_t qfnum,
                              const VkQueueFamilyProperties *qfs)
 {
+    if (has_synchronized_queues(&vk->features)) {
+        vk->lock_queue = queue_lock_noop;
+        vk->unlock_queue = queue_lock_noop;
+        return;
+    }
     vk->queue_locks.elem = pl_calloc_ptr(vk->alloc, qfnum, vk->queue_locks.elem);
     vk->queue_locks.num = qfnum;
     for (int i = 0; i < qfnum; i++) {
@@ -1169,7 +1213,6 @@ static bool device_init(struct vk_ctx *vk, const struct pl_vulkan_params *params
     vk->GetPhysicalDeviceQueueFamilyProperties(vk->physd, &qfnum, NULL);
     VkQueueFamilyProperties *qfs = pl_calloc_ptr(tmp, qfnum, qfs);
     vk->GetPhysicalDeviceQueueFamilyProperties(vk->physd, &qfnum, qfs);
-    init_queue_locks(vk, qfnum, qfs);
 
     PL_DEBUG(vk, "Queue families supported by device:");
     for (int i = 0; i < qfnum; i++) {
@@ -1305,6 +1348,12 @@ static bool device_init(struct vk_ctx *vk, const struct pl_vulkan_params *params
         goto error;
     }
 
+    VkDeviceQueueCreateFlags qflags = 0;
+#ifdef VK_KHR_internally_synchronized_queues
+    if (has_synchronized_queues(&vk->features))
+        qflags |= VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR;
+#endif
+
     // Enable all queues at device creation time, to maximize compatibility
     // with other API users (e.g. FFmpeg)
     PL_ARRAY(VkDeviceQueueCreateInfo) qinfos = {0};
@@ -1315,6 +1364,7 @@ static bool device_init(struct vk_ctx *vk, const struct pl_vulkan_params *params
             continue;
         PL_ARRAY_APPEND(tmp, qinfos, (VkDeviceQueueCreateInfo) {
             .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .flags = qflags,
             .queueFamilyIndex = i,
             .queueCount = qfs[i].queueCount,
             .pQueuePriorities = pl_calloc(tmp, qfs[i].queueCount, sizeof(float)),
@@ -1329,6 +1379,8 @@ static bool device_init(struct vk_ctx *vk, const struct pl_vulkan_params *params
         .ppEnabledExtensionNames = vk->exts.elem,
         .enabledExtensionCount = vk->exts.num,
     };
+
+    init_queue_locks(vk, qfnum, qfs);
 
     PL_INFO(vk, "Creating vulkan device%s", vk->exts.num ? " with extensions:" : "");
     for (int i = 0; i < vk->exts.num; i++)
@@ -1358,7 +1410,7 @@ static bool device_init(struct vk_ctx *vk, const struct pl_vulkan_params *params
             qnum = qmax;
         }
 
-        struct vk_cmdpool *pool = vk_cmdpool_create(vk, i, qnum, qfs[i]);
+        struct vk_cmdpool *pool = vk_cmdpool_create(vk, i, qnum, qfs[i], qflags);
         if (!pool)
             goto error;
         PL_ARRAY_APPEND(vk->alloc, vk->pools, pool);
@@ -1451,6 +1503,7 @@ static bool finalize_context(struct pl_vulkan_t *pl_vk, int max_glsl_version,
         queues[i] = (struct pl_vulkan_queue) {
             .index = vk->pools.elem[i]->qf,
             .count = vk->pools.elem[i]->num_queues,
+            .flags = vk->pools.elem[i]->flags,
         };
 
         if (vk->pools.elem[i] == vk->pool_graphics)
@@ -1728,7 +1781,8 @@ pl_vulkan pl_vulkan_import(pl_log log, const struct pl_vulkan_import_params *par
             }
         }
 
-        *pool = vk_cmdpool_create(vk, qf, qinfos[i].info->count, qfs[qf]);
+        *pool = vk_cmdpool_create(vk, qf, qinfos[i].info->count, qfs[qf],
+                                  qinfos[i].info->flags);
         if (!*pool)
             goto error;
         PL_ARRAY_APPEND(vk->alloc, vk->pools, *pool);

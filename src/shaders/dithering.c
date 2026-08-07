@@ -79,6 +79,7 @@ static inline float approx_gamma(enum pl_color_transfer trc)
     switch (trc) {
     case PL_COLOR_TRC_UNKNOWN:  return 1.0f;
     case PL_COLOR_TRC_LINEAR:   return 1.0f;
+    case PL_COLOR_TRC_SCRGB:    return 1.0f;
     case PL_COLOR_TRC_PRO_PHOTO:return 1.8f;
     case PL_COLOR_TRC_GAMMA18:  return 1.8f;
     case PL_COLOR_TRC_GAMMA20:  return 2.0f;
@@ -235,6 +236,10 @@ done: ;
 
     // Scale factor for dither rounding
     GLSL("const float scale = %llu.0; \n", (1LLU << new_depth) - 1);
+
+    // Don't let the dither pattern lift true black off zero. Clamp small noise
+    // near zero, which is likely produced by floating point inaccuracies.
+    GLSL("color = mix(color, vec4(0.0), lessThan(abs(color), vec4(1e-5))); \n");
 
     const float gamma = approx_gamma(params->transfer);
     if (gamma != 1.0f && new_depth <= 4) {
@@ -467,11 +472,10 @@ bool pl_shader_error_diffusion(pl_shader sh, const struct pl_error_diffusion_par
 
     GLSL(// Add the error previously propagated into current pixel, and clear
          // it in the ring buffer.
-         "uint err_u32 = err_rgb8[idx] + %uu;                                   \n"
+         "uint err_u32 = atomicExchange(err_rgb8[idx], 0u) + %uu;               \n"
          "pix = pix * %d.0 + vec3(int((err_u32 >> %d) & 0xFFu) - 128,           \n"
          "                        int((err_u32 >> %d) & 0xFFu) - 128,           \n"
          "                        int( err_u32        & 0xFFu) - 128) / %d.0;   \n"
-         "err_rgb8[idx] = 0u;                                                   \n"
          // Write the dithered pixel.
          "vec3 dithered = round(pix);                                           \n"
          "imageStore("$", ivec2(x, y), vec4(dithered / %d.0, pix_orig.a));      \n"

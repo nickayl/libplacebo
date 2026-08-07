@@ -1,7 +1,7 @@
 # libplacebo
 
 [![gitlab-ci badge](https://code.videolan.org/videolan/libplacebo/badges/master/pipeline.svg)](https://code.videolan.org/videolan/libplacebo/pipelines)
-[![gitlab-ci coverage](https://code.videolan.org/videolan/libplacebo/badges/master/coverage.svg)](https://code.videolan.org/videolan/libplacebo/-/jobs/artifacts/master/file/coverage/index.html?job=test-gpu)
+[![gitlab-ci coverage](https://code.videolan.org/videolan/libplacebo/badges/master/coverage.svg)](https://code.videolan.org/videolan/libplacebo/-/jobs/artifacts/master/file/coverage/index.html?job=gpu)
 [![GitHub](https://img.shields.io/github/sponsors/haasn?logo=github)](https://github.com/sponsors/haasn)
 [![PayPal](https://img.shields.io/badge/donate-PayPal-blue.svg?logo=paypal)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=SFJUTMPSZEAHC)
 [![Patreon](https://img.shields.io/badge/pledge-Patreon-red.svg?logo=patreon)](https://www.patreon.com/haasn)
@@ -18,7 +18,7 @@ on both quality and performance. These include features such as the following:
   histogram, scene change detection, dynamic exposure control, perceptual gamut
   stretching, contrast recovery and more.
 - Native support for **Dolby Vision HDR**, including Profile 5 conversion to
-  HDR/PQ or SDR, reading DV side data, and reshaping. (BL only, currently)
+  HDR/PQ or SDR, reading DV side data, and reshaping.
 - A colorimetrically accurate **color management** engine with support for
   soft gamut mapping, ICC profiles, accurate ITU-R BT.1886 emulation, black
   point compensation, and custom 3DLUTs (.cube).

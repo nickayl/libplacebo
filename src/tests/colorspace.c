@@ -48,7 +48,7 @@ int main()
 
     for (enum pl_color_transfer trc = 0; trc < PL_COLOR_TRC_COUNT; trc++) {
         printf("Testing color transfer: %s\n", pl_color_transfer_name(trc));
-        bool hdr = trc >= PL_COLOR_TRC_PQ && trc <= PL_COLOR_TRC_S_LOG2;
+        bool hdr = trc >= PL_COLOR_TRC_PQ && trc < PL_COLOR_TRC_COUNT;
         REQUIRE_CMP(hdr, ==, pl_color_transfer_is_hdr(trc), "d");
         REQUIRE_CMP(pl_color_transfer_nominal_peak(trc), >=, 1.0, "f");
 
@@ -67,6 +67,8 @@ int main()
             pl_color_linearize(&csp, color);
             if (trc == PL_COLOR_TRC_PQ)
                 REQUIRE_FEQ(color[0], pl_hdr_rescale(PL_HDR_PQ, PL_HDR_NORM, x), 1e-5f);
+            if (trc == PL_COLOR_TRC_SCRGB)
+                REQUIRE_FEQ(color[0], x * (PL_COLOR_SCRGB_WHITE / PL_COLOR_SDR_WHITE), 1e-6f);
             if (pl_color_space_is_black_scaled(&csp) || trc == PL_COLOR_TRC_BT_1886)
                 REQUIRE_CMP(color[0] + 1e-6f, >=, peak / contrast, "f");
             if (!pl_color_space_is_hdr(&csp) && trc != PL_COLOR_TRC_ST428)
@@ -84,6 +86,25 @@ int main()
                 break;
             }
         }
+    }
+
+    // Test scRGB out-of-gamut handling
+    {
+        const struct pl_color_space scrgb = { .transfer = PL_COLOR_TRC_SCRGB };
+        const float k_lin = PL_COLOR_SCRGB_WHITE / PL_COLOR_SDR_WHITE;
+        const float k_enc = PL_COLOR_SDR_WHITE  / PL_COLOR_SCRGB_WHITE;
+
+        float neg[3] = { -0.5f, -0.25f, 0.0f };
+        pl_color_linearize(&scrgb, neg);
+        REQUIRE_FEQ(neg[0], -0.5f  * k_lin, 1e-6f);
+        REQUIRE_FEQ(neg[1], -0.25f * k_lin, 1e-6f);
+        REQUIRE_FEQ(neg[2],  0.0f  * k_lin, 1e-6f);
+
+        float neg2[3] = { -0.3f, -0.1f, 0.0f };
+        pl_color_delinearize(&scrgb, neg2);
+        REQUIRE_FEQ(neg2[0], -0.3f * k_enc, 1e-6f);
+        REQUIRE_FEQ(neg2[1], -0.1f * k_enc, 1e-6f);
+        REQUIRE_FEQ(neg2[2],  0.0f * k_enc, 1e-6f);
     }
 
     float pq_peak = pl_color_transfer_nominal_peak(PL_COLOR_TRC_PQ);
@@ -475,10 +496,10 @@ int main()
     REQUIRE(!pl_hdr_metadata_contains(&hdr10plus.hdr, PL_HDR_METADATA_CIE_Y));
 
     TEST_METADATA(hdr10plus, PL_HDR_METADATA_NONE,      PL_COLOR_HDR_BLACK, 10000, 0);
-    TEST_METADATA(hdr10plus, PL_HDR_METADATA_CIE_Y,     PL_COLOR_HDR_BLACK, 4000, 0);
-    TEST_METADATA(hdr10plus, PL_HDR_METADATA_HDR10,     PL_COLOR_HDR_BLACK, 4000, 0);
-    TEST_METADATA(hdr10plus, PL_HDR_METADATA_HDR10PLUS, PL_COLOR_HDR_BLACK, 1000, 250);
-    TEST_METADATA(hdr10plus, PL_HDR_METADATA_ANY,       PL_COLOR_HDR_BLACK, 1000, 250);
+    TEST_METADATA(hdr10plus, PL_HDR_METADATA_CIE_Y,     0.005, 4000, 0);
+    TEST_METADATA(hdr10plus, PL_HDR_METADATA_HDR10,     0.005, 4000, 0);
+    TEST_METADATA(hdr10plus, PL_HDR_METADATA_HDR10PLUS, 0.005, 1000, 250);
+    TEST_METADATA(hdr10plus, PL_HDR_METADATA_ANY,       0.005, 1000, 250);
 
     const struct pl_color_space dovi = {
         .primaries = PL_COLOR_PRIM_BT_2020,
@@ -498,10 +519,10 @@ int main()
     REQUIRE(!pl_hdr_metadata_contains(&dovi.hdr, PL_HDR_METADATA_HDR10PLUS));
 
     TEST_METADATA(dovi, PL_HDR_METADATA_NONE,      PL_COLOR_HDR_BLACK, 10000, 0);
-    TEST_METADATA(dovi, PL_HDR_METADATA_HDR10,     PL_COLOR_HDR_BLACK, 4000, 0);
-    TEST_METADATA(dovi, PL_HDR_METADATA_HDR10PLUS, PL_COLOR_HDR_BLACK, 4000, 0);
-    TEST_METADATA(dovi, PL_HDR_METADATA_CIE_Y,     PL_COLOR_HDR_BLACK, 1000, 250);
-    TEST_METADATA(dovi, PL_HDR_METADATA_ANY,       PL_COLOR_HDR_BLACK, 1000, 250);
+    TEST_METADATA(dovi, PL_HDR_METADATA_HDR10,     0.005, 4000, 0);
+    TEST_METADATA(dovi, PL_HDR_METADATA_HDR10PLUS, 0.005, 4000, 0);
+    TEST_METADATA(dovi, PL_HDR_METADATA_CIE_Y,     0.005, 1000, 250);
+    TEST_METADATA(dovi, PL_HDR_METADATA_ANY,       0.005, 1000, 250);
 
     const struct pl_color_space hlg4000 = {
         .primaries    = PL_COLOR_PRIM_BT_2020,

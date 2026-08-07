@@ -576,13 +576,109 @@ static void pl_shader_tests(pl_gpu gpu)
         TEST_FBO_PATTERN(epsilon, "transfer function: %s", pl_color_transfer_name(trc));
     }
 
+    // Test scRGB. Mostly to make sure we output correct scale and out-of-gamut values.
+    // BT.2020 LINEAR to scRGB with Display P3 display primaries.
+    {
+        static const float bt2020_in[][4] = {
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // white
+            { 1.0f, 0.0f, 0.0f, 1.0f }, // red
+            { 0.0f, 1.0f, 0.0f, 1.0f }, // green
+            { 0.0f, 0.0f, 1.0f, 1.0f }, // blue
+        };
+
+        static const float clip_ref[][3] = {
+            {  2.5375f,   2.5375f,   2.5375f  },
+            {  4.2135f,  -0.3160f,  -0.0461f  },
+            { -1.4911f,   2.8747f,  -0.2552f  },
+            { -0.1849f,  -0.0212f,   2.8388f  },
+        };
+
+        static const float sat_ref[][3] = {
+            {  2.5375f,   2.5375f,   2.5375f  },
+            {  3.1083f,  -0.1067f,  -0.0464f  },
+            { -0.5708f,   2.6442f,  -0.1995f  },
+            {  0.0000f,   0.0000f,   2.7834f  },
+        };
+
+        const int N = PL_ARRAY_SIZE(bt2020_in);
+
+        pl_tex bt2020_tex = pl_tex_create(gpu, &(struct pl_tex_params) {
+            .format       = fbo_fmt,
+            .w            = N,
+            .h            = 1,
+            .sampleable   = true,
+            .initial_data = bt2020_in,
+        });
+        REQUIRE(bt2020_tex);
+
+        pl_tex ref_fbo = pl_tex_create(gpu, &(struct pl_tex_params) {
+            .format        = fbo_fmt,
+            .w             = N,
+            .h             = 1,
+            .renderable    = true,
+            .storable      = !!(fbo_fmt->caps & PL_FMT_CAP_STORABLE),
+            .host_readable = true,
+        });
+        REQUIRE(ref_fbo);
+
+        for (int g = 0; g < pl_num_gamut_map_functions; g++) {
+            const float (*ref)[3] = NULL;
+            if (pl_gamut_map_functions[g] == &pl_gamut_map_clip)
+                ref = clip_ref;
+            else if (pl_gamut_map_functions[g] == &pl_gamut_map_saturation)
+                ref = sat_ref;
+
+            if (!ref)
+                continue;
+
+            pl_shader_obj gmap_state = NULL;
+            sh = pl_dispatch_begin(dp);
+            pl_shader_sample_nearest(sh, pl_sample_src( .tex = bt2020_tex ));
+            pl_shader_color_map(sh, &(struct pl_color_map_params) {
+                                    .gamut_mapping = pl_gamut_map_functions[g],
+                                },
+                                (struct pl_color_space) {
+                                    .primaries = PL_COLOR_PRIM_BT_2020,
+                                    .transfer  = PL_COLOR_TRC_LINEAR,
+                                },
+                                (struct pl_color_space) {
+                                    .primaries = PL_COLOR_PRIM_BT_709,
+                                    .transfer  = PL_COLOR_TRC_SCRGB,
+                                    .hdr.prim  = *pl_raw_primaries_get(PL_COLOR_PRIM_DISPLAY_P3),
+                                }, &gmap_state, false);
+            REQUIRE(pl_dispatch_finish(dp, pl_dispatch_params(
+                .shader = &sh,
+                .target = ref_fbo,
+            )));
+            pl_shader_obj_destroy(&gmap_state);
+
+            static float p3_out[PL_ARRAY_SIZE(bt2020_in) * 4];
+            REQUIRE(pl_tex_download(gpu, &(struct pl_tex_transfer_params) {
+                .tex = ref_fbo,
+                .ptr = p3_out,
+            }));
+
+            for (int i = 0; i < N; i++) {
+                float *c = &p3_out[i * 4];
+                REQUIRE_FEQ(c[0], ref[i][0], 1e-4f);
+                REQUIRE_FEQ(c[1], ref[i][1], 1e-4f);
+                REQUIRE_FEQ(c[2], ref[i][2], 1e-4f);
+            }
+        }
+
+        pl_tex_destroy(gpu, &bt2020_tex);
+        pl_tex_destroy(gpu, &ref_fbo);
+    }
+
     for (enum pl_color_system sys = 0; sys < PL_COLOR_SYSTEM_COUNT; sys++) {
         if (sys == PL_COLOR_SYSTEM_DOLBYVISION)
             continue; // requires metadata
         sh = pl_dispatch_begin(dp);
         pl_shader_sample_nearest(sh, pl_sample_src( .tex = src ));
         pl_shader_encode_color(sh, &(struct pl_color_repr) { .sys = sys });
-        pl_shader_decode_color(sh, &(struct pl_color_repr) { .sys = sys }, NULL);
+        pl_shader_decode_color_ex(sh, pl_color_decode_args(
+            .repr = &(struct pl_color_repr) { .sys = sys },
+        ));
         REQUIRE(pl_dispatch_finish(dp, &(struct pl_dispatch_params) {
             .shader = &sh,
             .target = fbo,
@@ -771,7 +867,7 @@ static void pl_shader_tests(pl_gpu gpu)
 
     sh = pl_dispatch_begin(dp);
     pl_shader_sample_direct(sh, pl_sample_src( .tex = src ));
-    pl_shader_decode_color(sh, &repr, NULL);
+    pl_shader_decode_color_ex(sh, pl_color_decode_args( .repr = &repr ));
     REQUIRE(pl_dispatch_finish(dp, &(struct pl_dispatch_params) {
         .shader = &sh,
         .target = fbo,
@@ -1497,6 +1593,125 @@ error:
     pl_tex_destroy(gpu, &fbo);
 }
 
+// Verify that MSB-aligned output (e.g. P010) encodes the same value as the
+// LSB-aligned equivalent (e.g. yuv420p10), with zero padding bits.
+static void pl_render_bits_tests(pl_gpu gpu)
+{
+    pl_renderer rr = NULL;
+    pl_tex src_tex = NULL, lsb_tex = NULL, msb_tex = NULL;
+    printf("pl_render_bits_tests:\n");
+
+    // Need a true 16-bit UNORM render target we can read back bit-exactly
+    pl_fmt fmt = pl_find_fmt(gpu, PL_FMT_UNORM, 4, 16, 16,
+                             PL_FMT_CAP_RENDERABLE | PL_FMT_CAP_HOST_READABLE);
+    if (!fmt || fmt->component_depth[0] != 16) {
+        printf("- no suitable 16-bit UNORM format, skipping\n");
+        return;
+    }
+
+    enum { width = 64, height = 64 };
+
+    static uint16_t src_data[height][width][4];
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            uint16_t v = (uint16_t) ((x + y * width) * 0xFFFFu / (width * height - 1));
+            for (int c = 0; c < 4; c++)
+                src_data[y][x][c] = v;
+        }
+    }
+
+    struct pl_plane src_plane = {0};
+    struct pl_plane_data src_pdata = {
+        .type           = PL_FMT_UNORM,
+        .width          = width,
+        .height         = height,
+        .component_size = { 16, 16, 16, 16 },
+        .component_map  = { 0, 1, 2, 3 },
+        .pixel_stride   = 4 * sizeof(uint16_t),
+        .pixels         = src_data,
+    };
+    if (!pl_upload_plane(gpu, &src_plane, &src_tex, &src_pdata))
+        goto error;
+
+    lsb_tex = pl_tex_create(gpu, pl_tex_params(
+        .w = width, .h = height, .format = fmt,
+        .renderable = true, .host_readable = true,
+    ));
+    msb_tex = pl_tex_create(gpu, pl_tex_params(
+        .w = width, .h = height, .format = fmt,
+        .renderable = true, .host_readable = true,
+    ));
+    REQUIRE(lsb_tex);
+    REQUIRE(msb_tex);
+
+    rr = pl_renderer_create(gpu->log, gpu);
+    REQUIRE(rr);
+
+    struct pl_frame image = {
+        .num_planes = 1,
+        .planes     = { src_plane },
+        .repr       = pl_color_repr_rgb,
+        .color      = pl_color_space_srgb,
+    };
+
+    struct pl_frame target = {
+        .num_planes = 1,
+        .planes     = {{
+            .components        = 3,
+            .component_mapping = {0, 1, 2},
+        }},
+        .repr = {
+            .sys    = PL_COLOR_SYSTEM_BT_2020_NC,
+            .levels = PL_COLOR_LEVELS_LIMITED,
+            .bits   = { .sample_depth = 16, .color_depth = 10 },
+        },
+        .color = pl_color_space_srgb,
+    };
+
+    static uint16_t lsb_out[height][width][4];
+    static uint16_t msb_out[height][width][4];
+
+    // Dithering puts both encodings on the same 10-bit grid, so they must match
+    // exactly.
+    for (int dither = 1; dither >= 0; dither--) {
+        struct pl_render_params params = pl_render_default_params;
+        if (!dither)
+            params.dither_params = NULL;
+
+        target.planes[0].texture = lsb_tex;
+        target.repr.bits.bit_shift = 0;
+        REQUIRE(pl_render_image(rr, &image, &target, &params));
+        REQUIRE(pl_renderer_get_errors(rr).errors == PL_RENDER_ERR_NONE);
+
+        target.planes[0].texture = msb_tex;
+        target.repr.bits.bit_shift = 6;
+        REQUIRE(pl_render_image(rr, &image, &target, &params));
+        REQUIRE(pl_renderer_get_errors(rr).errors == PL_RENDER_ERR_NONE);
+
+        REQUIRE(pl_tex_download(gpu, pl_tex_transfer_params(.tex = lsb_tex, .ptr = lsb_out)));
+        REQUIRE(pl_tex_download(gpu, pl_tex_transfer_params(.tex = msb_tex, .ptr = msb_out)));
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                for (int c = 0; c < 3; c++) {
+                    int lsb = lsb_out[y][x][c];
+                    int msb = msb_out[y][x][c];
+                    REQUIRE_CMP(lsb, <=, 0x3FF, "d");    // fits in 10 bits
+                    REQUIRE_CMP(msb & 0x3F, ==, 0, "d"); // padding bits are zero
+                    if (dither)
+                        REQUIRE_CMP(msb >> 6, ==, lsb, "d");
+                }
+            }
+        }
+    }
+
+error:
+    pl_renderer_destroy(&rr);
+    pl_tex_destroy(gpu, &src_tex);
+    pl_tex_destroy(gpu, &lsb_tex);
+    pl_tex_destroy(gpu, &msb_tex);
+}
+
 static struct pl_hook_res noop_hook(void *priv, const struct pl_hook_params *params)
 {
     return (struct pl_hook_res) {0};
@@ -1748,6 +1963,7 @@ void gpu_shader_tests(pl_gpu gpu)
     pl_shader_tests(gpu);
     pl_scaler_tests(gpu);
     pl_render_tests(gpu);
+    pl_render_bits_tests(gpu);
     pl_ycbcr_tests(gpu);
 
     REQUIRE(!pl_gpu_is_failed(gpu));

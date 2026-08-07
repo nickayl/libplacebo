@@ -208,7 +208,7 @@ static bool set_swapchain_metadata(struct d3d11_ctx *ctx,
 {
     IDXGISwapChain4 *swapchain4 = NULL;
     bool ret = false;
-    bool is_hdr = pl_color_space_is_hdr(&csp_map->out_csp);
+    bool is_hdr = pl_color_transfer_is_hdr(csp_map->out_csp.transfer);
     DXGI_HDR_METADATA_HDR10 hdr10 = is_hdr ?
         set_hdr10_metadata(&csp_map->out_csp.hdr) : (DXGI_HDR_METADATA_HDR10){ 0 };
 
@@ -283,24 +283,27 @@ static void pick_colorspace(pl_swapchain sw, struct d3d11_csp_mapping *csp_map,
     if (!swapchain3)
         goto srgb;
 
+    // scRGB: linear BT.709 with extended range
+    if (csp_map->d3d11_fmt == DXGI_FORMAT_R16G16B16A16_FLOAT &&
+        d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709))
+    {
+        csp_map->d3d11_csp = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+        csp_map->out_csp = (struct pl_color_space) {
+            .primaries = PL_COLOR_PRIM_BT_709,
+            .transfer  = PL_COLOR_TRC_SCRGB,
+        };
+        goto hdr;
+    }
+
     // HDR10 output works only for DXGI_FORMAT_R10G10B10A2_UNORM, even though
     // it says csp is supported, the HDR pass-through makes only sense with rgb10a2.
-    // TODO: scRGB support
-    if (pl_color_space_is_hdr(hint) && csp_map->d3d11_fmt == DXGI_FORMAT_R10G10B10A2_UNORM) {
-        if (d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)) {
-            struct pl_color_space pl_csp = pl_color_space_hdr10;
-            pl_csp.hdr = (struct pl_hdr_metadata) {
-                // Whitelist only values that we support signalling metadata for
-                .prim     = hint->hdr.prim,
-                .min_luma = hint->hdr.min_luma,
-                .max_luma = hint->hdr.max_luma,
-                .max_cll  = hint->hdr.max_cll,
-                .max_fall = hint->hdr.max_fall,
-            };
-            csp_map->d3d11_csp = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
-            csp_map->out_csp = pl_csp;
-            return;
-        }
+    if (pl_color_transfer_is_hdr(hint->transfer) &&
+        csp_map->d3d11_fmt == DXGI_FORMAT_R10G10B10A2_UNORM &&
+        d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020))
+    {
+        csp_map->d3d11_csp = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+        csp_map->out_csp = pl_color_space_hdr10;
+        goto hdr;
     }
 
     if (pl_color_primaries_is_wide_gamut(hint->primaries)) {
@@ -314,22 +317,35 @@ static void pick_colorspace(pl_swapchain sw, struct d3d11_csp_mapping *csp_map,
         }
     }
 
-    if (!d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709)) {
-        if (d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709)) {
-            csp_map->d3d11_csp = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
-            csp_map->out_csp = (struct pl_color_space){
-                .primaries = PL_COLOR_PRIM_BT_709,
-                .transfer  = PL_COLOR_TRC_LINEAR,
-            };
-            return;
-        }
-        PL_ERR(ctx, "Couldn't find a supported color space for the swapchain! "
-                    "This is unexpected and may lead to incorrect colors.");
+    if (d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709))
+        goto srgb;
+
+    // scRGB fallback, if for some reason the above fails, it won't.
+    if (d3d11_csp_supported(ctx, swapchain3, DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709)) {
+        csp_map->d3d11_csp = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+        csp_map->out_csp = (struct pl_color_space) {
+            .primaries = PL_COLOR_PRIM_BT_709,
+            .transfer  = PL_COLOR_TRC_SCRGB,
+        };
+        return;
     }
+
+    PL_ERR(ctx, "Couldn't find a supported color space for the swapchain! "
+                "This is unexpected and may lead to incorrect colors.");
 
 srgb:
     csp_map->d3d11_csp = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
     csp_map->out_csp = pl_color_space_srgb;
+    return;
+
+hdr:
+    csp_map->out_csp.hdr = (struct pl_hdr_metadata) {
+        .prim     = hint->hdr.prim,
+        .min_luma = hint->hdr.min_luma,
+        .max_luma = hint->hdr.max_luma,
+        .max_cll  = hint->hdr.max_cll,
+        .max_fall = hint->hdr.max_fall,
+    };
 }
 
 static enum DXGI_FORMAT pick_format(pl_swapchain sw,
@@ -338,15 +354,13 @@ static enum DXGI_FORMAT pick_format(pl_swapchain sw,
     struct priv *p = PL_PRIV(sw);
     struct d3d11_ctx *ctx = p->ctx;
 
-    // Allow 16-bit, which is scRGB in practice, only if explicitly requested.
-    // Shouldn't be used as it's not fully supported in libplacebo yet.
-    bool use_16_bits = p->params.alpha_bits > 8 || p->params.color_bits > 10;
-
-    // TODO: add proper support for scRGB (DXGI_FORMAT_R16G16B16A16_FLOAT)
+    // Allow 16-bit, which is scRGB in practice.
+    bool use_16_bits = p->params.alpha_bits > 8 || p->params.color_bits > 10 ||
+                       hint->transfer == PL_COLOR_TRC_SCRGB;
     if (use_16_bits && d3d11_format_supported(ctx, DXGI_FORMAT_R16G16B16A16_FLOAT))
         return DXGI_FORMAT_R16G16B16A16_FLOAT;
 
-    bool use_10_bits = pl_color_space_is_hdr(hint) ||
+    bool use_10_bits = pl_color_transfer_is_hdr(hint->transfer) ||
                        pl_color_primaries_is_wide_gamut(hint->primaries) ||
                        !p->params.disable_10bit_sdr;
     // If >2 alpha bits are requested, don't use rgb10a2, drop to rgba8 instead.
@@ -400,12 +414,6 @@ static void update_swapchain_color_config(pl_swapchain sw,
             pl_get_dxgi_format_name(csp_map.d3d11_fmt),
             pl_get_dxgi_csp_name(csp_map.d3d11_csp));
 
-    if (csp_map.d3d11_csp == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709) {
-        // This is the last resort fallback.
-        PL_WARN(ctx, "scRGB (%s) is not fully supported, colors may be incorrect.",
-                pl_get_dxgi_format_name(csp_map.d3d11_fmt));
-    }
-
     p->csp_map = csp_map;
 
     if (!swapchain3)
@@ -423,7 +431,8 @@ cleanup:
 static void d3d11_sw_colorspace_hint(pl_swapchain sw,
                                      const struct pl_color_space *csp)
 {
-    update_swapchain_color_config(sw, csp, false);
+    if (csp->transfer != PL_COLOR_TRC_UNKNOWN)
+        update_swapchain_color_config(sw, csp, false);
 }
 
 IDXGISwapChain *pl_d3d11_swapchain_unwrap(pl_swapchain sw)
